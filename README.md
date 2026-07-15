@@ -147,9 +147,9 @@ Instead of remembering dozens of CLI commands, CloudBanana DE gives you a Window
 
 ## 📦 Installation
 
-**Requirements:** Linux with Python 3.10+, Node.js 18+, Nginx, and systemd
+**Requirements:** Debian-based Linux distribution with Python 3.10+, Node.js 18+, Nginx, and systemd
 
-*Optimized for Ubuntu 22.04/24.04 LTS, but works on any modern Linux distribution.*
+*Optimized for Ubuntu 22.04/24.04 LTS. Works on any Debian derivative (Debian, Linux Mint, Pop!_OS, etc.).*
 
 ```bash
 git clone https://github.com/dnysaz/cloudbanana.de.git

@@ -36,12 +36,23 @@ if [ ! -f /etc/os-release ]; then
 fi
 
 . /etc/os-release 2>/dev/null || true
-if [ "$ID" = "ubuntu" ] && [[ "$VERSION_ID" == "22.04" || "$VERSION_ID" == "24.04" ]]; then
-    ok "Ubuntu $VERSION_ID detected — fully supported"
+PKG_MANAGER=""
+if command -v apt-get &>/dev/null; then
+    PKG_MANAGER="apt"
+fi
+
+if [ -z "$PKG_MANAGER" ]; then
+    err "This installer requires a Debian-based Linux distribution (apt-get not found)."
+    err "Supported: Ubuntu, Debian, Linux Mint, Pop!_OS, and other Debian derivatives."
+    exit 1
+fi
+
+if [ "$ID" = "ubuntu" ]; then
+    ok "Ubuntu $VERSION_ID detected"
+elif [ "$ID" = "debian" ]; then
+    ok "Debian $VERSION_ID detected"
 else
-    warn "OS detection: ${ID:-unknown} ${VERSION_ID:-}"
-    warn "CloudBanana is optimized for Ubuntu 22.04/24.04 LTS."
-    warn "Continuing anyway — requires: Python 3.10+, Node.js 18+, Nginx, systemd."
+    warn "${ID:-Debian derivative} detected — continuing (optimized for Ubuntu/Debian)."
 fi
 
 INSTALL_DIR="/etc/cloudbanana"
