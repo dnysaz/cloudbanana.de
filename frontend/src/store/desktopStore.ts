@@ -9,9 +9,15 @@ interface DesktopState {
   pendingTerminalCommand: string | null;
   tbSearchQuery: string;
   pinnedApps: string[];
+  tbPinned: string[];
+  tbPinnedOrder: string[];
   pinApp: (id: string) => void;
   unpinApp: (id: string) => void;
   isPinned: (id: string) => boolean;
+  pinToTb: (id: string) => void;
+  unpinFromTb: (id: string) => void;
+  isTbPinned: (id: string) => boolean;
+  reorderTb: (ids: string[]) => void;
   setTbSearchQuery: (q: string) => void;
   setPendingTerminalCommand: (cmd: string | null) => void;
   openWindow: (id: string, title: string, data?: Record<string, unknown>) => void;
@@ -46,9 +52,22 @@ export const useDesktopStore = create<DesktopState>()(
   pendingTerminalCommand: null,
   tbSearchQuery: '',
   pinnedApps: ['terminal','bnote','www','bananabrowser','taskmgr','settings','nginx-editor'],
+  tbPinned: ['applications','www','taskmgr','terminal','trash'],
+  tbPinnedOrder: ['applications','www','taskmgr','terminal','trash'],
   pinApp: (id) => set((s) => ({ pinnedApps: s.pinnedApps.includes(id) ? s.pinnedApps : [...s.pinnedApps, id] })),
   unpinApp: (id) => set((s) => ({ pinnedApps: s.pinnedApps.filter((p) => p !== id) })),
   isPinned: (id) => get().pinnedApps.includes(id),
+  pinToTb: (id) => set((s) => {
+    if (s.tbPinned.includes(id)) return s;
+    const order = [...s.tbPinnedOrder, id];
+    return { tbPinned: [...s.tbPinned, id], tbPinnedOrder: order };
+  }),
+  unpinFromTb: (id) => set((s) => ({
+    tbPinned: s.tbPinned.filter((p) => p !== id),
+    tbPinnedOrder: s.tbPinnedOrder.filter((p) => p !== id),
+  })),
+  isTbPinned: (id) => get().tbPinned.includes(id),
+  reorderTb: (ids) => set({ tbPinnedOrder: ids }),
   setTbSearchQuery: (q) => set({ tbSearchQuery: q }),
   setPendingTerminalCommand: (cmd) => set({ pendingTerminalCommand: cmd }),
 

@@ -547,6 +547,10 @@ input, button, textarea { font-family:inherit; outline:none; }
   min-width: 2.4rem;
 }
 
+.dock-item[draggable="true"] {
+  cursor: grab;
+}
+
 .dock-item:hover {
   background: rgba(255,255,255,0.06);
   color: var(--text-primary);
@@ -555,6 +559,10 @@ input, button, textarea { font-family:inherit; outline:none; }
 
 .dock-item:active {
   transform: translateY(0);
+}
+
+.dock-item.dragging {
+  opacity: 0.4;
 }
 
 .dock-icon-wrap {
@@ -1272,6 +1280,11 @@ input, button, textarea { font-family:inherit; outline:none; }
   z-index:2000;
   min-width:180px;
   padding:0.3rem;
+}
+
+.tb-ctx-menu {
+  bottom: 4.5rem;
+  top: auto !important;
 }
 
 .ctx-menu {
