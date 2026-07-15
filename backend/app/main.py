@@ -29,6 +29,9 @@ from datetime import timedelta
 
 logger = logging.getLogger("cloudbanana.main")
 
+# Module-level lock for sequential nginx operations (prevent race conditions)
+_nginx_lock = asyncio.Lock()
+
 app = FastAPI(title="CloudBanana DE API", version="0.1.0")
 
 # ---- Rate Limiter ----
@@ -344,6 +347,10 @@ async def create_user(body: CreateUserBody, admin: User = Depends(require_admin)
         except IntegrityError:
             session.rollback()
             raise HTTPException(status_code=400, detail="Username or email already taken")
+        except Exception:
+            session.rollback()
+            logger.exception("Error creating user")
+            raise HTTPException(status_code=500, detail="Failed to create user")
     return {"status": "success", "message": f"User {body.username} created"}
 
 @app.patch("/api/v1/auth/users/{user_id}")
@@ -410,7 +417,7 @@ async def get_system_stats(user: User = Depends(get_current_user)):
                 "percent": usage.percent,
             })
         except Exception:
-            pass
+            logger.warning("Failed to get disk usage for a partition", exc_info=True)
 
     cpu = await asyncio.to_thread(psutil.cpu_percent, 0)
     cpu_per_core = await asyncio.to_thread(psutil.cpu_percent, 0, percpu=True)
@@ -421,6 +428,7 @@ async def get_system_stats(user: User = Depends(get_current_user)):
         cpu_freq = freq.current if freq else 0
         cpu_freq_max = freq.max if freq else 0
     except Exception:
+        logger.debug("Could not read CPU frequency")
         cpu_freq = 0
         cpu_freq_max = 0
     load_1, load_5, load_15 = await asyncio.to_thread(psutil.getloadavg)
@@ -435,6 +443,7 @@ async def get_system_stats(user: User = Depends(get_current_user)):
         temps = await asyncio.to_thread(psutil.sensors_temperatures)
         temperature = {k: [{"current": s.current, "high": s.high, "critical": s.critical} for s in v] for k, v in temps.items()} if temps else None
     except Exception:
+        logger.debug("Could not read temperature sensors")
         temperature = None
 
     return {
@@ -474,7 +483,7 @@ async def get_system_processes(user: User = Depends(get_current_user)):
     procs = []
     for p in await asyncio.to_thread(psutil.process_iter, ['pid', 'name', 'cpu_percent', 'memory_percent', 'memory_info', 'status', 'username', 'create_time']):
         try:
-            pinfo = await asyncio.to_thread(lambda: p.info)
+            pinfo = await asyncio.to_thread(lambda p=p: p.info)
             mem_mb = round(pinfo['memory_info'].rss / (1024 * 1024), 1) if pinfo['memory_info'] else 0
             procs.append({
                 "pid": pinfo['pid'],
@@ -1171,7 +1180,7 @@ async def empty_trash(user: User = Depends(get_current_user)):
         import shlex
         subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(trash_dir))} -mindepth 1 -delete"], capture_output=True, text=True, timeout=30)
     except Exception:
-        pass
+        logger.warning("Failed to empty trash", exc_info=True)
     return {"status": "ok", "message": "Trash emptied"}
 
 class TrashRestoreBody(BaseModel):
@@ -1439,6 +1448,9 @@ async def check_certbot(user: User = Depends(get_current_user)):
     try:
         r = subprocess.run([certbot, "--version"], capture_output=True, text=True, timeout=5)
         return {"installed": True, "version": r.stdout.strip() or r.stderr.strip()}
+    except subprocess.TimeoutExpired:
+        logger.warning("Certbot version check timed out")
+        return {"installed": True, "version": "unknown"}
     except Exception:
         return {"installed": True, "version": "unknown"}
 
@@ -1470,7 +1482,11 @@ async def request_cert(body: CertRequest, user: User = Depends(get_current_user)
             return {"status": "error", "message": detail.strip()}
         return {"status": "ok", "message": f"Certificate issued for {body.domain}"}
     except subprocess.TimeoutExpired:
+        logger.warning(f"Certificate request timed out for {body.domain}")
         return {"status": "error", "message": "Certificate request timed out"}
+    except Exception:
+        logger.exception(f"Unexpected error requesting certificate for {body.domain}")
+        return {"status": "error", "message": "Certificate request failed unexpectedly"}
     finally:
         subprocess.run(["systemctl", "start", "nginx"], capture_output=True, timeout=15)
 
@@ -2109,6 +2125,17 @@ async def laravel_management(user: User = Depends(get_current_user)):
     if not www.exists():
         return {"projects": []}
     projects = []
+    _php_version = None
+    if shutil.which("php"):
+        try:
+            r = subprocess.run(["php", "-v"], capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                m = re.search(r'PHP\s+([\d.]+)', r.stdout.split('\n')[0])
+                if m:
+                    _php_version = m.group(1)
+        except Exception:
+            pass
+
     for child in sorted(www.iterdir()):
         if not child.is_dir() or child.name.startswith('.'):
             continue
@@ -2119,18 +2146,31 @@ async def laravel_management(user: User = Depends(get_current_user)):
         storage_link = (child / "public" / "storage").exists() or (child / "public" / "storage").is_symlink()
         app_key_set = False
         migrated = False
+        migration_count = 0
+        app_env = None
+        app_debug = None
+        app_url = None
+        db_connection = None
+        port = None
         if has_env:
             try:
                 env_content = (child / ".env").read_text()
                 app_key_set = "APP_KEY=" in env_content and "APP_KEY=\n" not in env_content and "APP_KEY= " not in env_content
                 port_seed = int(hashlib.md5(str(child).encode()).hexdigest()[:4], 16)
                 port = 8080 + (port_seed % 100)
+                for line in env_content.splitlines():
+                    line = line.strip()
+                    if line.startswith('APP_ENV='):
+                        app_env = line.split('=', 1)[1].strip().strip('"\'')
+                    elif line.startswith('APP_DEBUG='):
+                        app_debug = line.split('=', 1)[1].strip().strip('"\'')
+                    elif line.startswith('APP_URL='):
+                        app_url = line.split('=', 1)[1].strip().strip('"\'')
+                    elif line.startswith('DB_CONNECTION='):
+                        db_connection = line.split('=', 1)[1].strip().strip('"\'')
             except (PermissionError, UnicodeDecodeError):
                 logger.warning(f"Cannot read .env for {child.name}")
                 app_key_set = False
-                port = None
-        else:
-            port = None
         if has_env and app_key_set:
             if shutil.which("php"):
                 try:
@@ -2142,19 +2182,49 @@ async def laravel_management(user: User = Depends(get_current_user)):
                         try:
                             data = json.loads(r.stdout)
                             if isinstance(data, list):
-                                executed = sum(1 for m in data if m.get("Ran", ""))
-                                migrated = executed > 0
+                                migration_count = sum(1 for m in data if m.get("Ran", ""))
+                                migrated = migration_count > 0
                         except (json.JSONDecodeError, TypeError):
                             pass
                 except Exception:
                     pass
-        nginx_configs = list(Path("/etc/nginx/sites-enabled").glob(f"{child.name}-port*")) + list(Path("/etc/nginx/sites-enabled").glob(f"{child.name}"))
-        url = None
-        for nc in nginx_configs:
+        # Laravel version from composer.json
+        laravel_version = None
+        composer_json = child / "composer.json"
+        if composer_json.exists():
             try:
-                content = nc.read_text()
+                data = json.loads(composer_json.read_text())
+                lv = data.get("require", {}).get("laravel/framework", "")
+                if lv:
+                    laravel_version = lv.lstrip('^~>=<! ')
+            except Exception:
+                pass
+        # Project size
+        project_size = None
+        try:
+            r = subprocess.run(["du", "-sh", "--exclude=vendor", str(child)], capture_output=True, text=True, timeout=10)
+            if r.returncode == 0:
+                project_size = r.stdout.strip().split('\t')[0]
+        except Exception:
+            pass
+        url = None
+        vhost_available = None
+        vhost_enabled = False
+        vhost_php_version = None
+        for f in Path("/etc/nginx/sites-available").iterdir():
+            if f.name == child.name or f.name.startswith(f"{child.name}-port"):
+                vhost_available = f
+                break
+        if vhost_available:
+            enabled_path = Path("/etc/nginx/sites-enabled") / vhost_available.name
+            vhost_enabled = enabled_path.exists()
+            try:
+                content = vhost_available.read_text()
                 m = re.search(r'listen\s+(\d+)', content)
                 sn = re.search(r'server_name\s+(\S+?);', content)
+                pv = re.search(r'php([\d.]+)-fpm\.sock', content)
+                if pv:
+                    vhost_php_version = pv.group(1)
                 if sn:
                     name = sn.group(1).strip()
                     if name != "_":
@@ -2171,10 +2241,217 @@ async def laravel_management(user: User = Depends(get_current_user)):
             "storage_link": storage_link,
             "app_key_set": app_key_set,
             "migrated": migrated,
+            "migration_count": migration_count,
+            "php_version": _php_version,
+            "laravel_version": laravel_version,
+            "app_env": app_env,
+            "app_debug": app_debug,
+            "app_url": app_url,
+            "db_connection": db_connection,
+            "project_size": project_size,
             "port": port,
             "url": url,
+            "vhost_enabled": vhost_enabled,
+            "vhost_php_version": vhost_php_version,
         })
     return {"projects": projects}
+
+class LaravelManageAction(BaseModel):
+    name: str
+    path: str | None = None
+    value: str | None = None
+
+class LaravelEnvWriteBody(BaseModel):
+    path: str
+    content: str
+
+class LaravelManagePhpBody(BaseModel):
+    path: str
+    php_version: str
+
+class LaravelManageDomainBody(BaseModel):
+    path: str
+    domain: str = ""
+    port: int | None = None
+
+@app.post("/api/v1/laravel/env-write")
+async def laravel_env_write(body: LaravelEnvWriteBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    env_file = proj / ".env"
+    _sudo_write(env_file, body.content)
+    return {"status": "ok"}
+
+@app.get("/api/v1/laravel/php-versions")
+async def laravel_php_versions(user: User = Depends(get_current_user)):
+    versions = []
+    for sock in Path("/var/run/php").glob("php*-fpm.sock"):
+        m = re.search(r'php([\d.]+)-fpm', sock.name)
+        if m:
+            versions.append(m.group(1))
+    return {"versions": sorted(versions)}
+
+@app.post("/api/v1/laravel/{name}/migrate")
+async def laravel_migrate(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    if not shutil.which("php"):
+        raise HTTPException(status_code=400, detail="PHP not found")
+    try:
+        r = subprocess.run(
+            ["php", "artisan", "migrate", "--force"],
+            capture_output=True, text=True, timeout=120, cwd=proj
+        )
+        return {
+            "status": "ok" if r.returncode == 0 else "error",
+            "output": r.stdout + r.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "output": "Command timed out"}
+    except Exception as e:
+        return {"status": "error", "output": str(e)}
+
+@app.post("/api/v1/laravel/{name}/rollback")
+async def laravel_rollback(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    if not shutil.which("php"):
+        raise HTTPException(status_code=400, detail="PHP not found")
+    try:
+        r = subprocess.run(
+            ["php", "artisan", "migrate:rollback", "--force"],
+            capture_output=True, text=True, timeout=120, cwd=proj
+        )
+        return {
+            "status": "ok" if r.returncode == 0 else "error",
+            "output": r.stdout + r.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "output": "Command timed out"}
+    except Exception as e:
+        return {"status": "error", "output": str(e)}
+
+@app.post("/api/v1/laravel/{name}/fresh")
+async def laravel_fresh(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    if not shutil.which("php"):
+        raise HTTPException(status_code=400, detail="PHP not found")
+    try:
+        r = subprocess.run(
+            ["php", "artisan", "migrate:fresh", "--force", "--seed"],
+            capture_output=True, text=True, timeout=180, cwd=proj
+        )
+        return {
+            "status": "ok" if r.returncode == 0 else "error",
+            "output": r.stdout + r.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "output": "Command timed out"}
+    except Exception as e:
+        return {"status": "error", "output": str(e)}
+
+def _find_nginx_vhost(proj_name: str) -> Path | None:
+    available = Path("/etc/nginx/sites-available")
+    for f in available.iterdir():
+        if f.name == proj_name or f.name.startswith(proj_name):
+            return f
+    return None
+
+def _sudo_write(path: Path, content: str):
+    tmp = Path(f"/tmp/opencode_nginx_{path.name}")
+    tmp.write_text(content)
+    subprocess.run(["sudo", "bash", "-c", f"cp {tmp} {path}"], capture_output=True, timeout=10)
+    tmp.unlink(missing_ok=True)
+
+def _sudo_unlink(path: Path):
+    subprocess.run(["sudo", "bash", "-c", f"rm -f {path}"], capture_output=True, timeout=10)
+
+def _sudo_symlink(target: Path, link: Path):
+    subprocess.run(["sudo", "bash", "-c", f"ln -sf {target} {link}"], capture_output=True, timeout=10)
+
+def _nginx_reload():
+    subprocess.run(["sudo", "bash", "-c", "nginx -t"], capture_output=True, timeout=10)
+    subprocess.run(["sudo", "bash", "-c", "systemctl reload nginx"], capture_output=True, timeout=15)
+
+@app.post("/api/v1/laravel/{name}/toggle")
+async def laravel_toggle(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    async with _nginx_lock:
+        vhost = _find_nginx_vhost(name)
+        if not vhost:
+            raise HTTPException(status_code=400, detail="No nginx vhost found for this project")
+        enabled = Path("/etc/nginx/sites-enabled") / vhost.name
+        is_currently_enabled = enabled.exists()
+        if is_currently_enabled:
+            _sudo_unlink(enabled)
+            status = "disabled"
+        else:
+            _sudo_symlink(vhost, enabled)
+            status = "enabled"
+        _nginx_reload()
+    return {"status": status}
+
+@app.post("/api/v1/laravel/{name}/php-version")
+async def laravel_change_php(name: str, body: LaravelManagePhpBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    php_ver = body.php_version
+    sock = Path(f"/var/run/php/php{php_ver}-fpm.sock")
+    if not sock.exists():
+        raise HTTPException(status_code=400, detail=f"PHP {php_ver} FPM socket not found")
+    async with _nginx_lock:
+        vhost = _find_nginx_vhost(name)
+        if not vhost:
+            raise HTTPException(status_code=400, detail="No nginx vhost found")
+        content = vhost.read_text()
+        new_content = re.sub(
+            r'fastcgi_pass unix:/var/run/php/php[\d.]+-fpm\.sock',
+            f'fastcgi_pass unix:/var/run/php/php{php_ver}-fpm.sock',
+            content
+        )
+        if new_content == content:
+            raise HTTPException(status_code=400, detail=f"PHP version already set to {php_ver}")
+        _sudo_write(vhost, new_content)
+        _nginx_reload()
+    return {"status": "ok", "php_version": php_ver}
+
+@app.post("/api/v1/laravel/{name}/domain")
+async def laravel_domain(name: str, body: LaravelManageDomainBody, user: User = Depends(get_current_user)):
+    proj = Path(body.path)
+    if not proj.exists() or not (proj / "artisan").exists():
+        raise HTTPException(status_code=400, detail="Invalid project path")
+    async with _nginx_lock:
+        vhost = _find_nginx_vhost(name)
+        if not vhost:
+            raise HTTPException(status_code=400, detail="No nginx vhost found")
+        content = vhost.read_text()
+        old_listen = re.search(r'listen\s+(\d+)', content)
+        old_name = re.search(r'server_name\s+(\S+?);', content)
+        listen_port = body.port or (int(old_listen.group(1)) if old_listen else 8080)
+        server_name = body.domain if body.domain else (old_name.group(1) if old_name else "_")
+        content = re.sub(r'listen\s+\d+', f'listen {listen_port}', content)
+        content = re.sub(r'server_name\s+[^;]+;', f'server_name {server_name};', content)
+        enabled = Path("/etc/nginx/sites-enabled") / vhost.name
+        _sudo_unlink(enabled)
+        _sudo_unlink(vhost)
+        new_name = server_name if server_name != "_" else f"{name}-port{listen_port}"
+        new_vhost = Path("/etc/nginx/sites-available") / new_name
+        _sudo_write(new_vhost, content)
+        _sudo_symlink(new_vhost, Path("/etc/nginx/sites-enabled") / new_name)
+        _nginx_reload()
+    return {
+        "status": "ok",
+        "url": f"http://{server_name}" if server_name != "_" else None,
+        "port": listen_port if server_name == "_" else None,
+    }
 
 # ========== SQLite Editor ==========
 

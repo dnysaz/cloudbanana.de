@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../api';
 import { Save, Edit3, X, AlertTriangle } from 'lucide-react';
 
@@ -15,6 +15,14 @@ export default function HostEditor(_props: Props) {
   const [status, setStatus] = useState<{ type: 'ok' | 'error' | ''; msg: string }>({ type: '', msg: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup status timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -39,7 +47,8 @@ export default function HostEditor(_props: Props) {
       setStatus({ type: 'ok', msg: 'Saved successfully' });
       setShowSaveModal(false);
       setIsEditing(false);
-      setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
+      if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+      statusTimeoutRef.current = setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
     } catch (e) {
       setStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Failed to save' });
     }

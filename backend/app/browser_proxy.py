@@ -62,6 +62,9 @@ _COOKIE_JAR_MAX_AGE = 3600  # 1 hour idle cleanup
 _COOKIE_JAR_MAX_SIZE = 50   # max domains before cleanup
 
 
+import logging
+_logger = logging.getLogger("cloudbanana.proxy")
+
 def _cleanup_cookie_jars():
     """Remove stale cookie jars to prevent memory leak."""
     now = time.time()
@@ -78,9 +81,9 @@ def _cleanup_cookie_jars():
                         if loop.is_running():
                             loop.create_task(info["client"].aclose())
                     except RuntimeError:
-                        pass
+                        _logger.warning(f"Event loop not available when closing client for {d}")
             except Exception:
-                pass
+                _logger.exception(f"Error closing client for {d}")
         if len(_cookie_jars) > _COOKIE_JAR_MAX_SIZE:
             sorted_domains = sorted(_cookie_jars.keys(),
                                     key=lambda d: _cookie_jars[d].get("last_used", 0))
@@ -94,9 +97,9 @@ def _cleanup_cookie_jars():
                             if loop.is_running():
                                 loop.create_task(info["client"].aclose())
                         except RuntimeError:
-                            pass
+                            _logger.warning(f"Event loop not available when closing client for {d}")
                 except Exception:
-                    pass
+                    _logger.exception(f"Error closing client for {d}")
 
 
 def _youtube_watch_to_embed(url: str) -> str:
@@ -388,8 +391,8 @@ def _get_client(target_url: str) -> httpx.AsyncClient:
             _cookie_jars[domain]["last_used"] = time.time()
             return _cookie_jars[domain]["client"]
 
-        # Run cleanup periodically (every 10th new domain)
-        if len(_cookie_jars) % 10 == 9:
+        # Run cleanup periodically (every 5th new domain, or if > 40 jars)
+        if len(_cookie_jars) % 5 == 4 or len(_cookie_jars) >= 40:
             _cleanup_cookie_jars()
 
         _cookie_jars[domain] = {

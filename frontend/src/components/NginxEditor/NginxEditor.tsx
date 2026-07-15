@@ -41,6 +41,14 @@ export default function NginxEditor(_props: Props) {
   const [newFileName, setNewFileName] = useState('');
   const [newFileSection, setNewFileSection] = useState<Section>('sites-available');
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const statusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup status timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+    };
+  }, []);
 
   const loadFiles = useCallback(async () => {
     const result: Record<Section, NginxFile[]> = { configs: [], 'sites-available': [], 'sites-enabled': [], 'conf.d': [] };
@@ -110,7 +118,8 @@ export default function NginxEditor(_props: Props) {
       setOrigContent(content);
       setStatus({ type: 'ok', msg: 'Saved successfully' });
       setShowSaveModal(false);
-      setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
+      if (statusTimeoutRef.current) clearTimeout(statusTimeoutRef.current);
+      statusTimeoutRef.current = setTimeout(() => setStatus({ type: '', msg: '' }), 3000);
     } catch (e) {
       setStatus({ type: 'error', msg: e instanceof Error ? e.message : 'Failed to save' });
       setSaveTestResult({ type: 'error', msg: e instanceof Error ? e.message : 'Failed to save' });

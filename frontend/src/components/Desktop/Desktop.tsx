@@ -104,7 +104,9 @@ const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toL
         items = items.filter((i) => !i.name.startsWith('.'));
       }
       setDesktopItems(items);
-    } catch {}
+    } catch {
+      // silently ignore
+    }
   }, [user, desktopDir, showHidden]);
 
   // Init effect: wallpaper, theme, event listeners — runs once on mount
@@ -192,11 +194,12 @@ const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toL
     } catch {}
   }, [fetchBlobUrl]);
 
-  // Load desktop items — isolated so it only runs when showHidden changes
+  // Load desktop items on mount
   useEffect(() => {
     api.post('/files/mkdir', { path: desktopDir }).catch(() => {});
     loadDesktop();
-  }, [loadDesktop]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Desktop refresh event listener
   useEffect(() => {
@@ -508,7 +511,7 @@ const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toL
                 </div>
               ) : (
                 <button className="desktop-icon"
-                  onClick={(e) => {
+                  onClick={() => {
                     const now = Date.now();
                     const last = desktopLastClick.current[item.name] || 0;
                     desktopLastClick.current[item.name] = now;

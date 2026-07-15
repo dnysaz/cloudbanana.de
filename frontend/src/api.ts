@@ -62,7 +62,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   clearTimeout(t);
 
   const text = await res.text();
-  let data: any;
+  let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
@@ -75,13 +75,15 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) {
     let detail = 'Request failed';
-    if (data) {
-      if (typeof data.detail === 'string') {
-        detail = data.detail;
-      } else if (Array.isArray(data.detail)) {
-        detail = data.detail.map((d: any) => d.msg || d.message).join('. ');
-      } else if (typeof data.detail === 'object' && data.detail !== null) {
-        detail = data.detail.message || JSON.stringify(data.detail);
+    if (typeof data === 'object' && data !== null) {
+      const errorData = data as Record<string, unknown>;
+      if (typeof errorData.detail === 'string') {
+        detail = errorData.detail;
+      } else if (Array.isArray(errorData.detail)) {
+        detail = (errorData.detail as Array<Record<string, unknown>>).map((d: Record<string, unknown>) => String(d.msg || d.message || '')).filter(Boolean).join('. ');
+      } else if (typeof errorData.detail === 'object' && errorData.detail !== null) {
+        const detailObj = errorData.detail as Record<string, unknown>;
+        detail = typeof detailObj.message === 'string' ? detailObj.message : JSON.stringify(detailObj);
       }
     }
     throw new ApiError(res.status, detail);

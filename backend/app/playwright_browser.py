@@ -47,8 +47,8 @@ class BrowserEngine:
             # Wait for network idle but don't fail if it takes too long
             try:
                 await self.page.wait_for_load_state("networkidle", timeout=10000)
-            except:
-                pass
+            except Exception:
+                logger.debug("Wait for network idle timed out, continuing...")
             # Extra wait for JS rendering
             await asyncio.sleep(1)
 
@@ -81,8 +81,8 @@ class BrowserEngine:
             await asyncio.sleep(0.5)
             try:
                 await self.page.wait_for_load_state("networkidle", timeout=8000)
-            except:
-                pass
+            except Exception:
+                logger.debug("Wait for network idle timed out, continuing...")
             await asyncio.sleep(0.3)
         except Exception as e:
             logger.error(f"Click error: {e}")
@@ -120,8 +120,8 @@ class BrowserEngine:
             await asyncio.sleep(0.5)
             try:
                 await self.page.wait_for_load_state("networkidle", timeout=8000)
-            except:
-                pass
+            except Exception:
+                logger.debug("Wait for network idle timed out, continuing...")
             await asyncio.sleep(0.3)
         except Exception as e:
             logger.error(f"Key press error: {e}")

@@ -4,7 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 import type { WinState } from '../../types';
 import {
   Terminal, Folder, Grid, Trash2, Monitor, Maximize2,
-  Settings, FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield,
+  FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield,
   Pin, X, Minus, Circle, LogOut,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
@@ -145,7 +145,7 @@ function getColor(appId: string): string {
 export default function Taskbar() {
   const store = useDesktopStore();
   const { windows, focusWindow, closeWindow, openWindow, closeStartMenu, minimizeWindow } = store;
-  const { tbPinned, tbPinnedOrder, isTbPinned, pinToTb, unpinFromTb, reorderTb } = store;
+  const { tbPinned, tbPinnedOrder, pinToTb, unpinFromTb, reorderTb } = store;
   const user = useAuthStore((s) => s.user);
   const trashDir = '/etc/cloudbanana/trash/' + (user?.username || 'root');
 
@@ -244,7 +244,7 @@ export default function Taskbar() {
 
   const items = buildItems();
 
-  const handleItemClick = (appId: string, isPinned: boolean, winIds: string[], wins: WinState[]) => {
+  const handleItemClick = (appId: string, _isPinned: boolean, winIds: string[], wins: WinState[]) => {
     if (appId === 'trash') {
       const existing = Object.keys(windows).find(wid => wid.startsWith('fm-') && windows[wid].data?.trash);
       if (existing && !windows[existing].minimized) {

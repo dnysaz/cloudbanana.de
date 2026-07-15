@@ -337,7 +337,8 @@ export default function FileManager({ winId, winData }: Props) {
 
   useEffect(() => {
     if (winId) setWindowData(winId, { path });
-  }, [path, winId, setWindowData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, winId]);
 
   useEffect(() => {
     const createHandler = (e: Event) => {
