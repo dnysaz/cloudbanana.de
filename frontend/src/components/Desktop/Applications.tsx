@@ -89,8 +89,8 @@ function getAppGradient(id: string): string {
   return APP_COLORS[id] || 'linear-gradient(135deg, #636366, #8e8e93)';
 }
 
-export default function Applications(_props: { winId?: string; winData?: Record<string, unknown> }) {
-  const { openWindow, closeStartMenu } = useDesktopStore();
+export default function Applications(props: { winId?: string; winData?: Record<string, unknown> }) {
+  const { windows, openWindow, closeWindow, closeStartMenu } = useDesktopStore();
   const [search, setSearch] = useState('');
   const [installedApps, setInstalledApps] = useState<InstalledAppInfo[]>([]);
 
@@ -127,7 +127,10 @@ export default function Applications(_props: { winId?: string; winData?: Record<
 
   const openApp = (app: AppItem) => {
     closeStartMenu();
-    openWindow(app.id, app.title, app.path ? { path: app.path } : undefined);
+    if (!windows[app.id]) {
+      openWindow(app.id, app.title, app.path ? { path: app.path } : undefined);
+    }
+    if (props.winId) closeWindow(props.winId);
   };
 
   return (
