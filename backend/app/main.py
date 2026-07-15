@@ -1745,9 +1745,10 @@ async def laravel_clone(body: LaravelCloneBody, user: User = Depends(get_current
         else:
             target.unlink()
     target.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["git", "clone", "--", body.repo, str(target)]
+    cmd = ["git", "clone"]
     if body.branch:
         cmd.extend(["--branch", body.branch])
+    cmd.extend(["--", body.repo, str(target)])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
