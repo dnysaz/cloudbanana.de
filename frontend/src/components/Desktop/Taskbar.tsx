@@ -159,6 +159,7 @@ export default function Taskbar() {
   const calRef = useRef<HTMLDivElement>(null);
   const [ctxMenu, setCtxMenu] = useState<TbCtxMenu | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  const savedDesktopRef = useRef<string[] | null>(null);
 
   const [clockTz] = useState(() => localStorage.getItem('cb-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   const [clockHour12] = useState(() => (localStorage.getItem('cb-clock-format') || '24h') === '12h');
@@ -404,8 +405,17 @@ export default function Taskbar() {
         <div id="dock-right">
           <button className="dock-icon-btn" title="Show Desktop"
             onClick={() => {
-              const wins = Object.keys(windows).filter(id => id !== 'widgets');
-              for (const id of wins) minimizeWindow(id);
+              const nonWidget = Object.keys(windows).filter(id => id !== 'widgets');
+              const nonMinimized = nonWidget.filter(id => !windows[id]?.minimized);
+              if (nonMinimized.length > 0) {
+                savedDesktopRef.current = nonMinimized;
+                for (const id of nonMinimized) minimizeWindow(id);
+              } else if (savedDesktopRef.current) {
+                for (const id of savedDesktopRef.current) {
+                  if (windows[id]) focusWindow(id);
+                }
+                savedDesktopRef.current = null;
+              }
             }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
           </button>
