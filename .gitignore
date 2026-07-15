@@ -1,0 +1,29 @@
+# Security - secret key (DO NOT COMMIT)
+backend/.secret_key
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+*.db
+*.db-shm
+*.db-wal
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+
+# Environment
+.env
+.env.local
+
+# CloudBanana runtime files
+cloudbanana.pid
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
