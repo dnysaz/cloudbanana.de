@@ -35,10 +35,13 @@ if [ ! -f /etc/os-release ]; then
     exit 1
 fi
 
-. /etc/os-release
-if [ "$ID" != "ubuntu" ] || [[ "$VERSION_ID" != "22.04" && "$VERSION_ID" != "24.04" ]]; then
-    err "CloudBanana requires Ubuntu 22.04 or 24.04 LTS."
-    exit 1
+. /etc/os-release 2>/dev/null || true
+if [ "$ID" = "ubuntu" ] && [[ "$VERSION_ID" == "22.04" || "$VERSION_ID" == "24.04" ]]; then
+    ok "Ubuntu $VERSION_ID detected — fully supported"
+else
+    warn "OS detection: ${ID:-unknown} ${VERSION_ID:-}"
+    warn "CloudBanana is optimized for Ubuntu 22.04/24.04 LTS."
+    warn "Continuing anyway — requires: Python 3.10+, Node.js 18+, Nginx, systemd."
 fi
 
 INSTALL_DIR="/etc/cloudbanana"
@@ -46,7 +49,6 @@ REPO_URL="${CLOUDBANANA_REPO_URL:-https://github.com/dnysaz/cloudbanana.de.git}"
 SERVICE_NAME="cloudbanana"
 SERVICE_PORT="${CLOUDBANANA_PORT:-8888}"
 CURRENT_STEP="Environment validation"
-ok "Ubuntu $VERSION_ID detected"
 
 # ============================================================
 # 1b. CREATE DEDICATED SERVICE USER (non-root)

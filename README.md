@@ -147,7 +147,9 @@ Instead of remembering dozens of CLI commands, CloudBanana DE gives you a Window
 
 ## 📦 Installation
 
-**Requires:** Ubuntu 22.04 or 24.04 LTS
+**Requirements:** Linux with Python 3.10+, Node.js 18+, Nginx, and systemd
+
+*Optimized for Ubuntu 22.04/24.04 LTS, but works on any modern Linux distribution.*
 
 ```bash
 git clone https://github.com/dnysaz/cloudbanana.de.git
@@ -156,7 +158,7 @@ sudo bash install.sh
 ```
 
 **What the installer does:**
-- Installs Python venv + Node.js + Nginx
+- Installs Python venv + Node.js + Nginx (via apt if available)
 - Creates dedicated system user `cloudbanana`
 - Builds the React frontend
 - Configures Nginx reverse proxy on port 8888 (auto-finds available port)
