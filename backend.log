@@ -1,0 +1,6 @@
+INFO:     Started server process [767521]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     ('127.0.0.1', 40712) - "WebSocket /api/v1/terminal/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImV4cCI6MTc4NDEyMTk0MCwianRpIjoiNmFlMTU2OTdiMWE3NjhhYTJhMzQ3YzE5ODBlY2IxZDgifQ.oORKsiSbM3jEU8eaJ74-GxrR8g2Fi7YOaoGbhDb-gOg" [accepted]
+INFO:     connection open

@@ -396,7 +396,6 @@ async def get_system_stats(user: User = Depends(get_current_user)):
     swap = await asyncio.to_thread(psutil.swap_memory)
     disks = []
     for part in await asyncio.to_thread(psutil.disk_partitions):
-        # Skip pseudo-filesystems to keep drive list clean
         if part.fstype in ('tmpfs', 'devtmpfs', 'squashfs', 'overlay', 'proc', 'sysfs', 'cgroup', 'cgroup2', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'efivarfs', 'tracefs', 'debugfs', 'configfs', 'autofs', 'devpts', 'fusectl', 'bpf'):
             continue
         try:
@@ -414,21 +413,82 @@ async def get_system_stats(user: User = Depends(get_current_user)):
             pass
 
     cpu = await asyncio.to_thread(psutil.cpu_percent, 0)
+    cpu_per_core = await asyncio.to_thread(psutil.cpu_percent, 0, percpu=True)
+    cpu_cores = await asyncio.to_thread(psutil.cpu_count)
+    cpu_phys = await asyncio.to_thread(psutil.cpu_count, logical=False)
+    try:
+        freq = await asyncio.to_thread(psutil.cpu_freq)
+        cpu_freq = freq.current if freq else 0
+        cpu_freq_max = freq.max if freq else 0
+    except Exception:
+        cpu_freq = 0
+        cpu_freq_max = 0
+    load_1, load_5, load_15 = await asyncio.to_thread(psutil.getloadavg)
+
     disk = await asyncio.to_thread(psutil.disk_usage, '/')
     uptime = await asyncio.to_thread(psutil.boot_time)
 
+    net = await asyncio.to_thread(psutil.net_io_counters)
+    procs = len(await asyncio.to_thread(psutil.pids))
+
+    try:
+        temps = await asyncio.to_thread(psutil.sensors_temperatures)
+        temperature = {k: [{"current": s.current, "high": s.high, "critical": s.critical} for s in v] for k, v in temps.items()} if temps else None
+    except Exception:
+        temperature = None
+
     return {
         "cpu": cpu,
+        "cpu_per_core": cpu_per_core,
+        "cpu_cores": cpu_cores,
+        "cpu_phys": cpu_phys,
+        "cpu_freq": cpu_freq,
+        "cpu_freq_max": cpu_freq_max,
+        "load_1": load_1,
+        "load_5": load_5,
+        "load_15": load_15,
         "ram_percent": mem.percent,
         "ram_used": mem.used,
         "ram_total": mem.total,
+        "ram_available": mem.available,
+        "ram_free": mem.free,
+        "ram_cached": getattr(mem, 'cached', 0),
+        "ram_buffers": getattr(mem, 'buffers', 0),
         "swap_percent": swap.percent,
         "swap_used": swap.used,
         "swap_total": swap.total,
-        "disk_percent": disk.percent,
-        "uptime_seconds": int(time.time() - uptime),
         "disks": disks,
+        "net_bytes_sent": net.bytes_sent,
+        "net_bytes_recv": net.bytes_recv,
+        "net_packets_sent": net.packets_sent,
+        "net_packets_recv": net.packets_recv,
+        "processes": procs,
+        "uptime_seconds": int(time.time() - uptime),
+        "disk_percent": disk.percent,
+        "temperature": temperature,
     }
+
+
+@app.get("/api/v1/system/processes")
+async def get_system_processes(user: User = Depends(get_current_user)):
+    procs = []
+    for p in await asyncio.to_thread(psutil.process_iter, ['pid', 'name', 'cpu_percent', 'memory_percent', 'memory_info', 'status', 'username', 'create_time']):
+        try:
+            pinfo = await asyncio.to_thread(p.info)
+            mem_mb = round(pinfo['memory_info'].rss / (1024 * 1024), 1) if pinfo['memory_info'] else 0
+            procs.append({
+                "pid": pinfo['pid'],
+                "name": pinfo['name'] or '',
+                "cpu": round(pinfo['cpu_percent'] or 0, 1),
+                "mem": round((pinfo['memory_percent'] or 0), 1),
+                "mem_mb": mem_mb,
+                "status": pinfo['status'] or '',
+                "user": pinfo['username'] or '',
+                "created": datetime.fromtimestamp(pinfo['create_time']).isoformat() if pinfo['create_time'] else '',
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied, TypeError):
+            pass
+    return procs
 
 @app.get("/api/v1/apps/status")
 async def list_apps(user: User = Depends(get_current_user)):
