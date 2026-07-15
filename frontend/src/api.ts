@@ -44,7 +44,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const csrf = getCsrfToken();
   if (csrf) headers['X-CSRF-Token'] = csrf;
   const controller = new AbortController();
-  const isLongRunning = path.startsWith('/docker/') || path.startsWith('/laravel/composer-') || path.startsWith('/laravel/ensure-');
+  const isLongRunning = path.startsWith('/docker/') || path.startsWith('/laravel/') || path.startsWith('/apps/') || path.startsWith('/system/apt/');
   const timeout = isLongRunning ? 300000 : opts.body instanceof FormData ? 60000 : 30000;
   const t = setTimeout(() => controller.abort(), timeout);
 
