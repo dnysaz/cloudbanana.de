@@ -163,7 +163,7 @@ export default function Applications(_props: { winId?: string; winData?: Record<
                   className="lp-icon"
                   style={{ background: getAppGradient(app.id) }}
                 >
-                  <app.icon size={26} />
+                  <app.icon size={34} />
                 </div>
                 <span className="lp-title">{app.title}</span>
               </button>

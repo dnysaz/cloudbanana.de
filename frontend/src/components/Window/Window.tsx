@@ -39,16 +39,20 @@ export default function Window({ id, title, children }: Props) {
     } catch {}
   }
 
-  let sz = WIN_SIZES[id] || (id.startsWith('fm-') ? { w: 820, h: 540 } : id.startsWith('bnote-') ? { w: 1100, h: 720 } : id.startsWith('git-') ? { w: 560, h: 440 } : id.startsWith('web-') ? { w: 900, h: 640 } : id.startsWith('terminal-') ? { w: 900, h: 560 } : id === 'bananabrowser' ? { w: 1024, h: 700 } : { w: 420, h: 320 });
+  let sz = WIN_SIZES[id] || (id.startsWith('fm-') ? { w: 820, h: 540 } : id.startsWith('bnote-') ? { w: 1100, h: 720 } : id.startsWith('git-') ? { w: 560, h: 440 } : id.startsWith('web-') ? { w: 900, h: 640 } : id.startsWith('terminal-') ? { w: 900, h: 560 } : id === 'bananabrowser' ? { w: 1024, h: 700 } : id === 'applications' ? { w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) } : { w: 420, h: 320 });
   if (savedSize) sz = savedSize;
 
   const count = Object.keys(windows || {}).indexOf(id);
   const defaultLeft = isWidget
-    ? Math.max(0, window.innerWidth - sz.w - 24) // widgets: right side
-    : Math.min(40 + count * 24, window.innerWidth - sz.w - 20);
+    ? Math.max(0, window.innerWidth - sz.w - 24)
+    : id === 'applications'
+      ? Math.round((window.innerWidth - sz.w) / 2)
+      : Math.min(40 + count * 24, window.innerWidth - sz.w - 20);
   const defaultTop = isWidget
-    ? Math.max(0, window.innerHeight - sz.h - 80) // widgets: bottom-right
-    : Math.min(30 + count * 20, window.innerHeight - sz.h - 60);
+    ? Math.max(0, window.innerHeight - sz.h - 80)
+    : id === 'applications'
+      ? Math.round((window.innerHeight - sz.h) / 2)
+      : Math.min(30 + count * 20, window.innerHeight - sz.h - 60);
   const hasSaved = isWidget && savedSize !== null; // savedSize only non-null when JSON had data
   const left = hasSaved ? savedPos.left : defaultLeft;
   const top = hasSaved ? savedPos.top : defaultTop;

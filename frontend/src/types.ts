@@ -142,7 +142,7 @@ export const WIN_SIZES: Record<string, { w: number; h: number }> = {
   sqleditor: { w: 960, h: 640 },
   appinstaller: { w: 720, h: 540 },
   widgets: { w: 820, h: 520 },
-  applications: { w: 900, h: 640 },
+
   'nginx-editor': { w: 960, h: 640 },
   'php-editor': { w: 960, h: 640 },
   'host-editor': { w: 820, h: 540 },
