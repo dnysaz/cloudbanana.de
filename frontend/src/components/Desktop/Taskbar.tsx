@@ -5,7 +5,7 @@ import type { WinState } from '../../types';
 import {
   Terminal, Folder, Grid, Trash2, Monitor, Maximize2,
   Settings, FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield,
-  Pin, X, Minus, Circle,
+  Pin, X, Minus, Circle, LogOut,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 
@@ -402,6 +402,13 @@ export default function Taskbar() {
         </div>
 
         <div id="dock-right">
+          <button className="dock-icon-btn" title="Show Desktop"
+            onClick={() => {
+              const wins = Object.keys(windows).filter(id => id !== 'widgets');
+              for (const id of wins) minimizeWindow(id);
+            }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </button>
           <button className="dock-icon-btn" title="Fullscreen"
             onClick={() => {
               if (document.fullscreenElement) {
@@ -418,6 +425,12 @@ export default function Taskbar() {
             <span id="tb-time">{clock}</span>
             <span id="tb-date">{date}</span>
           </div>
+          <button className="dock-icon-btn" title="Log Out"
+            onClick={() => {
+              useAuthStore.getState().logout();
+            }}>
+            <LogOut size={14} />
+          </button>
         </div>
 
         {showCal && (
