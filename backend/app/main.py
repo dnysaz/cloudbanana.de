@@ -1904,11 +1904,12 @@ async def laravel_permissions(body: LaravelPermissionsBody, user: User = Depends
         if d.exists():
             subprocess.run(["chown", "-R", "www-data:www-data", str(d)], capture_output=True, timeout=30)
             subprocess.run(["chmod", "-R", "755", str(d)], capture_output=True, timeout=30)
-    # Also fix the database file if it exists
-    db_file = proj / "database" / "database.sqlite"
-    if db_file.exists():
-        subprocess.run(["chown", "www-data:www-data", str(db_file)], capture_output=True, timeout=10)
-        subprocess.run(["chmod", "664", str(db_file)], capture_output=True, timeout=10)
+    # Fix any SQLite database files (in database/ or at project root)
+    for pattern in ["database/database.sqlite", "database/*.sqlite", "*.sqlite", proj.name]:
+        for f in proj.glob(pattern):
+            if f.is_file():
+                subprocess.run(["chown", "www-data:www-data", str(f)], capture_output=True, timeout=10)
+                subprocess.run(["chmod", "664", str(f)], capture_output=True, timeout=10)
     return {"status": "ok", "message": "Permissions fixed"}
 
 @app.post("/api/v1/laravel/assets-build")
@@ -1986,13 +1987,13 @@ async def laravel_vhost(body: LaravelVhostBody, background_tasks: BackgroundTask
         try_files $uri $uri/ /index.php?$query_string;
     }}
 
-    location ~ [.]php${{
+    location ~ \.php$ {{
         fastcgi_pass unix:{fpm_sock};
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
     }}
 
-    location ~ /[.]ht {{
+    location ~ /\.ht {{
         deny all;
     }}
 }}

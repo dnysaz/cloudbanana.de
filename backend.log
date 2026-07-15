@@ -1,15 +1,6 @@
-INFO:     Started server process [771660]
+INFO:     Started server process [781356]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/users/public HTTP/1.0" 200 OK
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/check HTTP/1.0" 200 OK
-INFO:     127.0.0.1:59634 - "POST /api/v1/auth/login HTTP/1.1" 200 OK
-LARAVEL_CLONE repo='https://github.com/dnysaz/cashbekas' branch='main' target='/var/www/cashbekas'
-LARAVEL_CLONE cmd='git clone --branch main -- https://github.com/dnysaz/cashbekas /var/www/cashbekas'
-LARAVEL_CLONE rc=0
-INFO:     127.0.0.1:59646 - "POST /api/v1/laravel/clone HTTP/1.1" 200 OK
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/users/public HTTP/1.0" 200 OK
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/users/public HTTP/1.0" 200 OK
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/avatar/1 HTTP/1.0" 404 Not Found
-INFO:     103.175.215.234:0 - "GET /api/v1/auth/avatar/1 HTTP/1.0" 404 Not Found
+INFO:     103.175.215.234:0 - "GET /api/v1/audit/logs HTTP/1.0" 200 OK
+INFO:     103.175.215.234:0 - "GET /api/v1/system/stats HTTP/1.0" 200 OK
