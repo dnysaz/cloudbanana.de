@@ -474,7 +474,7 @@ async def get_system_processes(user: User = Depends(get_current_user)):
     procs = []
     for p in await asyncio.to_thread(psutil.process_iter, ['pid', 'name', 'cpu_percent', 'memory_percent', 'memory_info', 'status', 'username', 'create_time']):
         try:
-            pinfo = await asyncio.to_thread(p.info)
+            pinfo = await asyncio.to_thread(lambda: p.info)
             mem_mb = round(pinfo['memory_info'].rss / (1024 * 1024), 1) if pinfo['memory_info'] else 0
             procs.append({
                 "pid": pinfo['pid'],
