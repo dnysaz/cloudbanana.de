@@ -225,13 +225,17 @@ def rewrite_html(html: str, base_url: str, proxy_base: str | None = None) -> byt
         _rewrite_srcset, html, flags=re.IGNORECASE
     )
 
-    # Inject <base> tag ONLY for sites that don't break with it
-    # YouTube etc. handle their own routing and break with custom <base>
+    # Inject/replace <base> tag so ALL relative URLs resolve through the proxy.
+    # First, REMOVE any existing <base> tag (only the first <base> is used per HTML spec).
+    # Without this, if the page already has a <base> tag, our injected one would be ignored.
     skip_base = _should_skip_base_tag(base_url)
     if not skip_base:
+        html = re.sub(r'<base[^>]*>', '', html, count=1, flags=re.IGNORECASE)
         base_tag = f'<base href="{pb}">'
-        if "<head>" in html:
-            html = html.replace("<head>", f"<head>{base_tag}", 1)
+        # Case-insensitive <head> insertion
+        head_pos = html.lower().find("<head>")
+        if head_pos != -1:
+            html = html[:head_pos] + f"<head>{base_tag}" + html[head_pos + 6:]
         else:
             html = f"<head>{base_tag}</head>{html}"
 
