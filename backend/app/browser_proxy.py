@@ -424,6 +424,7 @@ def _get_client(target_url: str) -> httpx.AsyncClient:
                 follow_redirects=True,
                 timeout=30.0,
                 cookies={},
+                limits=httpx.Limits(max_connections=10, max_keepalive_connections=3, keepalive_expiry=60.0),
                 headers={
                     "User-Agent": CHROME_UA,
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -481,10 +482,15 @@ async def _proxy_request(request, target_url: str, auth_token: str = ""):
 
         req_body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
 
-        resp = await client.request(method, target_url, headers=req_headers, content=req_body)
-
-        content = resp.content
-        content_type = resp.headers.get("content-type", "").split(";")[0]
+        # Stream response with max size limit to prevent memory exhaustion (10MB)
+        async with client.stream(method, target_url, headers=req_headers, content=req_body) as resp:
+            content_type = resp.headers.get("content-type", "").split(";")[0]
+            MAX_BODY = 10 * 1024 * 1024  # 10MB
+            content = b""
+            async for chunk in resp.aiter_bytes():
+                content += chunk
+                if len(content) > MAX_BODY:
+                    return _error_html_page(413, "Response Too Large", f"The response from {target_url} exceeds the maximum size of 10MB.", target_url)
 
         # Rewrite HTML to proxy all URLs
         if content_type == "text/html":
