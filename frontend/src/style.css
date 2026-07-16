@@ -1397,6 +1397,13 @@ input, button, textarea { font-family:inherit; outline:none; }
   border-top-right-radius: var(--radius-lg);
 }
 
+/* BWeb (WebView) — remove padding and overflow so iframe fills the window */
+[id^="win-web-"] .win-body,
+[id^="app-"] .win-body {
+  padding: 0;
+  overflow: hidden;
+}
+
 .win-title {
   font-size:0.75rem; font-weight:600;
   color: var(--text-primary);
