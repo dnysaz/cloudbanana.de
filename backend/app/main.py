@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 from app.utils.system import run_command
 from app.database import init_db, engine
-from app.models import User, AuditLog, TokenBlacklist, FileLink as FileLinkModel
+from app.models import User, AuditLog, TokenBlacklist, Setting, FileLink as FileLinkModel
 from app.auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_admin,
@@ -23,6 +23,7 @@ from app.auth import (
 )
 from app.apps import APPS, get_all_status, get_script_path
 from app.browser_proxy import _proxy_request, extract_target_from_view, _is_private_host
+from app import settings_cache
 from pathlib import Path
 from pydantic import BaseModel, field_validator
 from datetime import timedelta
@@ -63,6 +64,19 @@ async def csrf_middleware(request: Request, call_next):
     # race conditions with rapid successive POST requests on HTTP connections.
     return response
 
+# ---- Security Headers Middleware ----
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    # Security headers for API responses
+    # Skip X-Frame-Options for proxy view (BananaBrowser renders in iframe)
+    if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/v1/proxy/"):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 # ---- CORS (same-origin only — frontend & API via same nginx) ----
 app.add_middleware(
     CORSMiddleware,
@@ -73,9 +87,14 @@ app.add_middleware(
     expose_headers=["Content-Type"],
 )
 
+# Max upload file size: 100 MB
+def _max_upload_bytes() -> int:
+    return settings_cache.get_int("max_upload_size_mb", 100) * 1024 * 1024
+
 @app.on_event("startup")
 def on_startup():
     init_db()
+    settings_cache.load()
     # Cleanup expired blacklisted tokens and old audit logs
     with Session(engine) as session:
         expired = session.exec(
@@ -219,7 +238,7 @@ async def check_admin_exists():
         return {"admin_exists": admin is not None}
 
 @app.post("/api/v1/auth/register")
-@limiter.limit("3/hour")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_register", "3/hour"))
 async def register_admin(request: Request, body: RegisterBody):
     client_ip = request.client.host if request.client else "unknown"
     with Session(engine) as session:
@@ -245,7 +264,7 @@ async def register_admin(request: Request, body: RegisterBody):
     return {"status": "success", "message": "Admin registered successfully"}
 
 @app.post("/api/v1/auth/login")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_login", "10/minute"))
 async def login(request: Request, body: LoginBody):
     client_ip = request.client.host if request.client else "unknown"
 
@@ -293,7 +312,7 @@ async def logout(request: Request, user: User = Depends(get_current_user)):
     return {"status": "success", "message": "Logged out successfully"}
 
 @app.post("/api/v1/auth/change-password")
-@limiter.limit("5/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_change_password", "5/minute"))
 async def change_password(request: Request, body: ChangePasswordBody, user: User = Depends(get_current_user)):
     if not verify_password(body.current_password, user.hashed_password):
         add_audit_log("change_password_failed", user.username, "Incorrect current password")
@@ -504,7 +523,8 @@ async def list_apps(user: User = Depends(get_current_user)):
     return get_all_status()
 
 @app.post("/api/v1/apps/install/{app_id}")
-async def install_app(app_id: str, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_app_install", "5/minute"))
+async def install_app(request: Request, app_id: str, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     app_def = next((a for a in APPS if a["id"] == app_id), None)
     if not app_def:
         raise HTTPException(status_code=400, detail="Application not supported")
@@ -574,7 +594,8 @@ async def get_install_status(task_id: str, user: User = Depends(get_current_user
     return {"status": t.get("status", "unknown"), "output": t.get("output", "")}
 
 @app.post("/api/v1/apps/install")
-async def install_from_git(body: InstallUrlBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_git_clone", "5/minute"))
+async def install_from_git(request: Request, body: InstallUrlBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     from urllib.parse import urlparse
     if not re.match(r'^https?://', body.url):
         raise HTTPException(status_code=400, detail="Invalid URL")
@@ -591,7 +612,8 @@ async def install_from_git(body: InstallUrlBody, background_tasks: BackgroundTas
     return {"task_id": tid, "status": "running"}
 
 @app.post("/api/v1/apps/install/upload")
-async def install_from_upload(body: InstallUploadBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_app_install", "5/minute"))
+async def install_from_upload(request: Request, body: InstallUploadBody, user: User = Depends(get_current_user)):
     src = safe_path(body.path, user)
     if not src.exists() or not src.is_file():
         raise HTTPException(status_code=400, detail="Uploaded file not found")
@@ -619,7 +641,8 @@ async def install_from_upload(body: InstallUploadBody, user: User = Depends(get_
     return {"status": "success", "message": f"App {body.app_name} installed"}
 
 @app.delete("/api/v1/apps/installed/{app_name}")
-async def uninstall_app(app_name: str, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_app_install", "5/minute"))
+async def uninstall_app(request: Request, app_name: str, user: User = Depends(get_current_user)):
     # Basic path traversal prevention
     if not re.match(r'^[a-zA-Z0-9_.-]+$', app_name):
         raise HTTPException(status_code=400, detail="Invalid app name")
@@ -717,7 +740,8 @@ async def list_www(user: User = Depends(get_current_user)):
     return {"items": items}
 
 @app.post("/api/v1/www")
-async def create_www_folder(body: CreateFolderBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_www_folder", "10/minute"))
+async def create_www_folder(request: Request, body: CreateFolderBody, user: User = Depends(get_current_user)):
     folder = Path("/var/www") / body.name
     if folder.exists():
         raise HTTPException(status_code=400, detail="Folder already exists")
@@ -725,7 +749,7 @@ async def create_www_folder(body: CreateFolderBody, user: User = Depends(get_cur
     return {"status": "success", "message": f"Folder /var/www/{body.name} created"}
 
 @app.post("/api/v1/subdomain")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_subdomain", "10/minute"))
 async def create_subdomain(request: Request, body: SubdomainBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     target = Path(body.target_dir)
     config = f"""server {{
@@ -749,7 +773,8 @@ async def create_subdomain(request: Request, body: SubdomainBody, background_tas
     return {"status": "success", "message": f"Subdomain {body.subdomain}.{body.domain} configured"}
 
 @app.post("/api/v1/nginx/test")
-async def test_nginx_config(user = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_nginx_test", "10/minute"))
+async def test_nginx_config(request: Request, user = Depends(get_current_user)):
     # Use sudo because nginx -t requires root for reading /run/nginx.pid
     result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
     output = (result.stdout + result.stderr).strip()
@@ -853,7 +878,7 @@ async def list_files(path: str = "/", user = Depends(get_current_user)):
     return {"items": items, "path": str(p)}
 
 @app.post("/api/v1/files/mkdir")
-@limiter.limit("20/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_mkdir", "20/minute"))
 async def create_folder(request: Request, body: FileAction, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     if _sudo_exists(str(p)):
@@ -864,18 +889,30 @@ async def create_folder(request: Request, body: FileAction, user = Depends(get_c
     return {"status": "ok"}
 
 @app.post("/api/v1/files/upload")
-async def upload_file(file: UploadFile = File(...), path: str = Form(...), user = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_upload", "10/minute"))
+async def upload_file(request: Request, file: UploadFile = File(...), path: str = Form(...), user = Depends(get_current_user)):
     target_dir = Path(safe_path(path, user))
     if not _sudo_exists(str(target_dir), "-d"):
         raise HTTPException(status_code=404, detail="Target directory not found")
-    dest = target_dir / file.filename
+    # Pre-check Content-Length header before reading body
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > _max_upload_bytes():
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {_max_upload_bytes() // (1024*1024)}MB")
+    # Sanitize filename: strip path separators, limit length
+    raw_name = (file.filename or "upload").replace("/", "_").replace("\\", "_")[:255]
+    if not raw_name:
+        raw_name = "upload"
+    dest = target_dir / raw_name
     if _sudo_exists(str(dest)):
         base, ext = dest.stem, dest.suffix
         counter = 1
         while _sudo_exists(str(dest)):
             dest = target_dir / f"{base} ({counter}){ext}"
             counter += 1
-    content = await file.read()
+    # Read with size limit to prevent memory exhaustion (cap read to MAX + 1)
+    content = await file.read(_max_upload_bytes() + 1)
+    if len(content) > _max_upload_bytes():
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {_max_upload_bytes() // (1024*1024)}MB")
     # Use sudo tee to write file (cloudbanana user may not have write permission)
     result = subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(dest.parent))} && cat > {shlex.quote(str(dest))}"], input=content, capture_output=True, timeout=30)
     if result.returncode != 0:
@@ -883,7 +920,8 @@ async def upload_file(file: UploadFile = File(...), path: str = Form(...), user 
     return {"status": "ok", "path": str(dest)}
 
 @app.post("/api/v1/files/read")
-async def read_file(body: FileAction, user = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_read", "30/minute"))
+async def read_file(request: Request, body: FileAction, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     if not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
@@ -891,7 +929,7 @@ async def read_file(body: FileAction, user = Depends(get_current_user)):
     return {"content": content, "path": str(p)}
 
 @app.post("/api/v1/files/write")
-@limiter.limit("30/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_write", "30/minute"))
 async def write_file(request: Request, body: WriteFileBody, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     import shlex
@@ -904,7 +942,7 @@ async def write_file(request: Request, body: WriteFileBody, user = Depends(get_c
     return {"status": "ok"}
 
 @app.post("/api/v1/files/remove")
-@limiter.limit("30/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_remove", "30/minute"))
 async def remove_file(request: Request, body: FileAction, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     if not _sudo_exists(str(p)):
@@ -948,7 +986,8 @@ async def serve_raw_file(path: str, user = Depends(get_current_user)):
     return Response(content=data.stdout, media_type=media_type or "application/octet-stream")
 
 @app.post("/api/v1/files/link")
-async def create_file_link(body: FileAction, user = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_link", "20/minute"))
+async def create_file_link(request: Request, body: FileAction, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     if not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
@@ -1024,7 +1063,7 @@ async def update_file_link(file_id: str, body: FileAction, user = Depends(get_cu
     return {"status": "ok"}
 
 @app.post("/api/v1/files/rename")
-@limiter.limit("20/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_rename", "20/minute"))
 async def rename_file(request: Request, body: RenameBody, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     if not _sudo_exists(str(p)):
@@ -1036,7 +1075,7 @@ async def rename_file(request: Request, body: RenameBody, user = Depends(get_cur
     return {"status": "ok"}
 
 @app.post("/api/v1/files/copy")
-@limiter.limit("20/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_copy", "20/minute"))
 async def copy_file(request: Request, body: CopyMoveBody, user = Depends(get_current_user)):
     src = safe_path(body.path, user)
     dst = safe_path(body.dest, user)
@@ -1053,7 +1092,7 @@ async def copy_file(request: Request, body: CopyMoveBody, user = Depends(get_cur
     return {"status": "ok"}
 
 @app.post("/api/v1/files/move")
-@limiter.limit("20/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_move", "20/minute"))
 async def move_file(request: Request, body: CopyMoveBody, user = Depends(get_current_user)):
     src = safe_path(body.path, user)
     dst = safe_path(body.dest, user)
@@ -1093,7 +1132,7 @@ def _do_compress(src: Path, dest: Path):
             zf.write(src, src.name)
 
 @app.post("/api/v1/files/compress")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_compress", "10/minute"))
 async def compress_file(request: Request, body: FileAction, user = Depends(get_current_user)):
     src = safe_path(body.path, user)
     if not _sudo_exists(str(src)):
@@ -1115,7 +1154,7 @@ async def compress_file(request: Request, body: FileAction, user = Depends(get_c
     return {"status": "ok", "path": str(dest)}
 
 @app.post("/api/v1/files/compress-multi")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_compress", "10/minute"))
 async def compress_multi(request: Request, body: CompressMultiBody, user = Depends(get_current_user)):
     paths = [safe_path(p, user) for p in body.paths]
     for p in paths:
@@ -1149,7 +1188,7 @@ async def compress_multi(request: Request, body: CompressMultiBody, user = Depen
     return {"status": "ok", "path": str(dest)}
 
 @app.post("/api/v1/files/extract")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_extract", "10/minute"))
 async def extract_file(request: Request, body: FileAction, user = Depends(get_current_user)):
     src = safe_path(body.path, user)
     if not _sudo_exists(str(src), "-f"):
@@ -1170,7 +1209,8 @@ async def extract_file(request: Request, body: FileAction, user = Depends(get_cu
 # ========== Trash API ==========
 
 @app.post("/api/v1/trash/empty")
-async def empty_trash(user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_trash_empty", "10/minute"))
+async def empty_trash(request: Request, user: User = Depends(get_current_user)):
     INSTALL_DIR = Path("/etc/cloudbanana")
     trash_dir = INSTALL_DIR / "trash" / user.username
     if not trash_dir.exists():
@@ -1187,7 +1227,8 @@ class TrashRestoreBody(BaseModel):
     path: str
 
 @app.post("/api/v1/trash/restore")
-async def restore_trash(body: TrashRestoreBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_trash_restore", "10/minute"))
+async def restore_trash(request: Request, body: TrashRestoreBody, user: User = Depends(get_current_user)):
     src = safe_path(body.path, user)
     if not src.exists():
         raise HTTPException(status_code=404, detail="File not found in trash")
@@ -1258,7 +1299,8 @@ class RemovePkgBody(BaseModel):
         return v
 
 @app.post("/api/v1/system/packages/remove")
-async def remove_system_package(body: RemovePkgBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_package_remove", "5/minute"))
+async def remove_system_package(request: Request, body: RemovePkgBody, user: User = Depends(get_current_user)):
     try:
         result = subprocess.run(
             ["apt-get", "remove", "-y", body.package],
@@ -1365,7 +1407,7 @@ class CronUpdateBody(BaseModel):
     content: str
 
 @app.post("/api/v1/cron")
-@limiter.limit("5/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_cron", "5/minute"))
 async def update_cron(request: Request, body: CronUpdateBody, user: User = Depends(get_current_user)):
     try:
         result = subprocess.run(["crontab", "-"], input=body.content, text=True, capture_output=True, timeout=10)
@@ -1455,7 +1497,8 @@ async def check_certbot(user: User = Depends(get_current_user)):
         return {"installed": True, "version": "unknown"}
 
 @app.post("/api/v1/ssl/install-certbot")
-async def install_certbot(user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_certbot_install", "3/hour"))
+async def install_certbot(request: Request, user: User = Depends(get_current_user)):
     try:
         r = subprocess.run(["apt-get", "install", "-y", "certbot"], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
@@ -1465,7 +1508,8 @@ async def install_certbot(user: User = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Installation timed out")
 
 @app.post("/api/v1/ssl/certificate")
-async def request_cert(body: CertRequest, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_cert_request", "5/hour"))
+async def request_cert(request: Request, body: CertRequest, user: User = Depends(get_current_user)):
     certbot = shutil.which("certbot")
     if not certbot:
         raise HTTPException(status_code=400, detail="Certbot is not installed")
@@ -1518,7 +1562,8 @@ class Pm2ActionBody(BaseModel):
     action: str  # start, stop, restart, delete
 
 @app.post("/api/v1/pm2/action")
-async def pm2_action(body: Pm2ActionBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_pm2_action", "10/minute"))
+async def pm2_action(request: Request, body: Pm2ActionBody, user: User = Depends(get_current_user)):
     if body.action not in ("start", "stop", "restart", "delete"):
         raise HTTPException(status_code=400, detail="Invalid action")
     ok, out = run_command(["pm2", body.action, body.name], timeout=15)
@@ -1540,7 +1585,7 @@ class HostsBody(BaseModel):
     content: str
 
 @app.post("/api/v1/hosts")
-@limiter.limit("5/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_hosts", "5/minute"))
 async def write_hosts(request: Request, body: HostsBody, user: User = Depends(get_current_user)):
     try:
         Path("/etc/hosts").write_text(body.content)
@@ -1581,7 +1626,7 @@ class DbQueryBody(BaseModel):
     query: str
 
 @app.post("/api/v1/databases/query")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_db_query", "10/minute"))
 async def db_query(request: Request, body: DbQueryBody, user: User = Depends(get_current_user)):
     if not re.match(r'^[a-zA-Z0-9_]+$', body.database):
         raise HTTPException(status_code=400, detail="Invalid database name")
@@ -1718,7 +1763,8 @@ def _install_php_extensions(php_ver: str):
         subprocess.run(["phpenmod", "-v", php_ver] + list(still_missing), capture_output=True, timeout=10)
 
 @app.post("/api/v1/laravel/ensure-php")
-async def laravel_ensure_php(user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_ensure_php", "10/minute"))
+async def laravel_ensure_php(request: Request, user: User = Depends(get_current_user)):
     php_ver = _get_php_ver()
     if php_ver:
         # Pastikan semua extension Laravel terinstall
@@ -1735,7 +1781,8 @@ async def laravel_ensure_php(user: User = Depends(get_current_user)):
     return {"installed": True, "version": new_ver, "extensions_installed": True}
 
 @app.post("/api/v1/laravel/install-composer")
-async def laravel_install_composer(user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_install_composer", "5/hour"))
+async def laravel_install_composer(request: Request, user: User = Depends(get_current_user)):
     try:
         r = subprocess.run(["apt-get", "install", "-y", "composer"], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
@@ -1753,7 +1800,8 @@ async def laravel_install_composer(user: User = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Installation timed out")
 
 @app.post("/api/v1/laravel/clone")
-async def laravel_clone(body: LaravelCloneBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_clone", "3/hour"))
+async def laravel_clone(request: Request, body: LaravelCloneBody, user: User = Depends(get_current_user)):
     target = Path(body.path)
     if target.exists():
         if target.is_dir():
@@ -1774,16 +1822,25 @@ async def laravel_clone(body: LaravelCloneBody, user: User = Depends(get_current
         raise HTTPException(status_code=500, detail="Clone timed out")
 
 @app.post("/api/v1/laravel/upload-zip")
-async def laravel_upload_zip(file: UploadFile = File(...), path: str = Form(...), user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_upload_zip", "5/hour"))
+async def laravel_upload_zip(request: Request, file: UploadFile = File(...), path: str = Form(...), user: User = Depends(get_current_user)):
+    # Pre-check Content-Length before reading body
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > _max_upload_bytes():
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {_max_upload_bytes() // (1024*1024)}MB")
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     zip_path = target / "laravel-upload.zip"
-    content = await file.read()
+    # Read with size limit (cap read to MAX + 1)
+    content = await file.read(_max_upload_bytes() + 1)
+    if len(content) > _max_upload_bytes():
+        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {_max_upload_bytes() // (1024*1024)}MB")
     zip_path.write_bytes(content)
     return {"status": "ok", "zip_path": str(zip_path)}
 
 @app.post("/api/v1/laravel/extract")
-async def laravel_extract(body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_extract", "5/hour"))
+async def laravel_extract(request: Request, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     target = Path(body.path)
     zip_path = target / "laravel-upload.zip"
     if not zip_path.exists():
@@ -1805,7 +1862,8 @@ async def laravel_extract(body: LaravelProjectBody, user: User = Depends(get_cur
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/laravel/composer-install")
-async def laravel_composer_install(body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_composer_install", "5/hour"))
+async def laravel_composer_install(request: Request, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     composer = shutil.which("composer") or shutil.which("composer.phar")
     if not composer:
         raise HTTPException(status_code=400, detail="Composer not installed")
@@ -1907,7 +1965,8 @@ class LaravelPermissionsBody(BaseModel):
     path: str
 
 @app.post("/api/v1/laravel/permissions")
-async def laravel_permissions(body: LaravelPermissionsBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_permissions", "10/minute"))
+async def laravel_permissions(request: Request, body: LaravelPermissionsBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists():
         raise HTTPException(status_code=400, detail="Project directory not found")
@@ -1929,7 +1988,8 @@ async def laravel_permissions(body: LaravelPermissionsBody, user: User = Depends
     return {"status": "ok", "message": "Permissions fixed"}
 
 @app.post("/api/v1/laravel/assets-build")
-async def laravel_assets_build(body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_assets", "5/hour"))
+async def laravel_assets_build(request: Request, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists():
         raise HTTPException(status_code=400, detail="Project directory not found")
@@ -1970,7 +2030,8 @@ class LaravelVhostBody(BaseModel):
     with_ssl: bool = False
 
 @app.post("/api/v1/laravel/vhost")
-async def laravel_vhost(body: LaravelVhostBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_vhost", "10/minute"))
+async def laravel_vhost(request: Request, body: LaravelVhostBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists():
         raise HTTPException(status_code=400, detail="Project directory not found")
@@ -2275,7 +2336,8 @@ class LaravelManageDomainBody(BaseModel):
     port: int | None = None
 
 @app.post("/api/v1/laravel/env-write")
-async def laravel_env_write(body: LaravelEnvWriteBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_env_write", "10/minute"))
+async def laravel_env_write(request: Request, body: LaravelEnvWriteBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists() or not (proj / "artisan").exists():
         raise HTTPException(status_code=400, detail="Invalid project path")
@@ -2293,7 +2355,8 @@ async def laravel_php_versions(user: User = Depends(get_current_user)):
     return {"versions": sorted(versions)}
 
 @app.post("/api/v1/laravel/{name}/migrate")
-async def laravel_migrate(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_migrate", "5/hour"))
+async def laravel_migrate(request: Request, name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists() or not (proj / "artisan").exists():
         raise HTTPException(status_code=400, detail="Invalid project path")
@@ -2314,7 +2377,8 @@ async def laravel_migrate(name: str, body: LaravelProjectBody, user: User = Depe
         return {"status": "error", "output": str(e)}
 
 @app.post("/api/v1/laravel/{name}/rollback")
-async def laravel_rollback(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_migrate", "5/hour"))
+async def laravel_rollback(request: Request, name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists() or not (proj / "artisan").exists():
         raise HTTPException(status_code=400, detail="Invalid project path")
@@ -2335,7 +2399,8 @@ async def laravel_rollback(name: str, body: LaravelProjectBody, user: User = Dep
         return {"status": "error", "output": str(e)}
 
 @app.post("/api/v1/laravel/{name}/fresh")
-async def laravel_fresh(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_migrate", "5/hour"))
+async def laravel_fresh(request: Request, name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
     proj = Path(body.path)
     if not proj.exists() or not (proj / "artisan").exists():
         raise HTTPException(status_code=400, detail="Invalid project path")
@@ -2520,7 +2585,7 @@ async def sql_list_tables(path: str | None = None, user: User = Depends(get_curr
     return {"tables": table_names, "schemas": schemas}
 
 @app.post("/api/v1/sql/execute")
-@limiter.limit("30/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_sql_execute", "30/minute"))
 async def sql_execute(request: Request, body: SqlQueryBody, user: User = Depends(get_current_user)):
     if not body.query or not body.query.strip():
         raise HTTPException(status_code=400, detail="Query is empty")
@@ -2597,7 +2662,7 @@ class WgetBody(BaseModel):
     dir: str = "/root"
 
 @app.post("/api/v1/wget")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_wget", "10/minute"))
 async def wget_download(request: Request, body: WgetBody, background_tasks: BackgroundTasks, user = Depends(get_current_user)):
     from urllib.parse import urlparse
     if not re.match(r'^https?://', body.url):
@@ -2726,7 +2791,81 @@ async def proxy_view(path: str, request: Request, user: User = Depends(get_curre
         raise HTTPException(status_code=400, detail="Cannot proxy the CloudBanana DE server itself")
     return await _proxy_request(request, target_url)
 
+# ========== Dynamic Settings API ==========
+
+class SettingsUpdateBody(BaseModel):
+    settings: dict[str, str]
+
+@app.get("/api/v1/settings")
+async def get_settings(user=Depends(get_current_user)):
+    """Get all settings from the database."""
+    with Session(engine) as session:
+        all_settings = session.exec(select(Setting)).all()
+        return {s.key: s.value for s in all_settings}
+
+@app.post("/api/v1/settings")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_settings", "10/minute"))
+async def update_settings(request: Request, body: SettingsUpdateBody, user=Depends(get_current_user)):
+    """Update one or more settings in the database."""
+    with Session(engine) as session:
+        for key, value in body.settings.items():
+            existing = session.get(Setting, key)
+            if existing:
+                existing.value = value
+                session.add(existing)
+            else:
+                session.add(Setting(key=key, value=value))
+        session.commit()
+    add_audit_log("settings_updated", user.username, f"Updated {len(body.settings)} settings")
+    return {"status": "ok", "updated": list(body.settings.keys())}
+
+@app.get("/api/v1/settings/defaults")
+async def get_settings_defaults(user=Depends(get_current_user)):
+    """Get default security settings values."""
+    return {
+        "rate_limit_login": "10/minute",
+        "rate_limit_register": "3/hour",
+        "rate_limit_change_password": "5/minute",
+        "rate_limit_upload": "10/minute",
+        "rate_limit_write": "30/minute",
+        "rate_limit_remove": "30/minute",
+        "rate_limit_mkdir": "20/minute",
+        "rate_limit_read": "30/minute",
+        "rate_limit_copy": "20/minute",
+        "rate_limit_move": "20/minute",
+        "rate_limit_rename": "20/minute",
+        "rate_limit_compress": "10/minute",
+        "rate_limit_extract": "10/minute",
+        "rate_limit_trash_empty": "10/minute",
+        "rate_limit_trash_restore": "10/minute",
+        "rate_limit_subdomain": "10/minute",
+        "rate_limit_nginx_test": "10/minute",
+        "rate_limit_www_folder": "10/minute",
+        "rate_limit_cron": "5/minute",
+        "rate_limit_package_remove": "5/minute",
+        "rate_limit_certbot_install": "3/hour",
+        "rate_limit_cert_request": "5/hour",
+        "rate_limit_pm2_action": "10/minute",
+        "rate_limit_hosts": "5/minute",
+        "rate_limit_db_query": "10/minute",
+        "rate_limit_sql_execute": "30/minute",
+        "rate_limit_wget": "10/minute",
+        "rate_limit_proxy_view": "30/minute",
+        "rate_limit_app_install": "5/minute",
+        "rate_limit_git_clone": "3/hour",
+        "rate_limit_laravel_clone": "3/hour",
+        "rate_limit_laravel_migrate": "5/hour",
+        "rate_limit_laravel_assets": "5/hour",
+        "rate_limit_laravel_env_write": "10/minute",
+        "rate_limit_laravel_permissions": "10/minute",
+        "max_upload_size_mb": "100",
+        "session_timeout_seconds": "3600",
+        "lockout_threshold": "5",
+        "lockout_duration_minutes": "15",
+    }
+
 @app.post("/api/v1/proxy/view/{path:path}")
+@limiter.limit(lambda: settings_cache.get_rate("rate_limit_proxy_view", "30/minute"))
 async def proxy_view_post(path: str, request: Request, user: User = Depends(get_current_user)):
     target_url = extract_target_from_view(f"/api/v1/proxy/view/{path}")
     if not target_url:

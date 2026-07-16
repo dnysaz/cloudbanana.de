@@ -5,7 +5,7 @@ import type { WinState } from '../../types';
 import {
   Terminal, Folder, Grid, Trash2, Monitor, Maximize2,
   FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield,
-  Pin, X, Minus, Circle, LogOut,
+  Pin, X, Minus, Circle, LogOut, Settings,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 

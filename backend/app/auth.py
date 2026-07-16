@@ -14,6 +14,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from app.database import engine
 from app.models import User, TokenBlacklist, AuditLog, Lockout
+from app import settings_cache
 
 logger = logging.getLogger("cloudbanana.auth")
 
@@ -33,15 +34,19 @@ if not _SECRET_KEY:
         pass
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480
 _PBKDF2_ITERATIONS = 100000
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
-# Account lockout threshold
-_LOCKOUT_THRESHOLD = 5       # Max failed attempts before lockout
-_LOCKOUT_DURATION = 900      # 15 minutes in seconds
+def _lockout_threshold() -> int:
+    return settings_cache.get_int("lockout_threshold", 5)
+
+def _lockout_duration_seconds() -> int:
+    return settings_cache.get_int("lockout_duration_minutes", 15) * 60
+
+def _session_timeout_minutes() -> int:
+    return settings_cache.get_int("session_timeout_seconds", 3600) // 60
 
 security = HTTPBearer(auto_error=False)
 
@@ -66,7 +71,7 @@ def set_auth_cookies(response: Response, token: str):
         value=token,
         httponly=True,
         samesite="strict",
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=_session_timeout_minutes() * 60,
         path="/",
         secure=_SECURE,
     )
@@ -75,7 +80,7 @@ def set_auth_cookies(response: Response, token: str):
         value=csrf_token,
         httponly=False,
         samesite="strict",
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=_session_timeout_minutes() * 60,
         path="/",
         secure=_SECURE,
     )
@@ -106,7 +111,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=_session_timeout_minutes()))
     to_encode.update({"exp": expire, "jti": secrets.token_hex(16)})
     return jwt.encode(to_encode, _SECRET_KEY, algorithm=ALGORITHM)
 
@@ -166,8 +171,8 @@ def record_failed_attempt(username: str):
             entry = Lockout(username=username, failed=0)
             session.add(entry)
         entry.failed += 1
-        if entry.failed >= _LOCKOUT_THRESHOLD:
-            entry.locked_until = datetime.utcnow() + timedelta(seconds=_LOCKOUT_DURATION)
+        if entry.failed >= _lockout_threshold():
+            entry.locked_until = datetime.utcnow() + timedelta(seconds=_lockout_duration_seconds())
             logger.warning(f"Account locked due to {entry.failed} failed attempts: {username}")
         session.commit()
 

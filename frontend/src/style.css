@@ -3641,10 +3641,12 @@ input, button, textarea { font-family:inherit; outline:none; }
 .st-content h3 { font-size:0.85rem; font-weight:600; color: var(--text-primary); margin-bottom:0.1rem; }
 .st-content p { font-size:0.68rem; color: var(--text-secondary); margin-bottom:0.75rem; }
 
-.st-row { display:flex; align-items:center; justify-content:space-between; padding:0.6rem 0; border-bottom:1px solid var(--border-subtle); }
+.st-row { display:flex; align-items:center; justify-content:space-between; padding:0.85rem 0; border-bottom:1px solid var(--border-subtle); }
 .st-row:last-child { border-bottom:none; }
 .st-label { font-size:0.75rem; color: var(--text-primary); }
 .st-desc { font-size:0.62rem; color: var(--text-secondary); }
+.st-input { background: var(--bg-input); border:1px solid var(--border-input); border-radius: var(--radius); color: var(--text-primary); padding:0.2rem 0.45rem; font-size:0.72rem; }
+.st-input:focus { border-color: var(--accent); }
 .st-select { background: var(--bg-input); border:1px solid var(--border-input); border-radius: var(--radius); color: var(--text-primary); padding:0.2rem 0.45rem; font-size:0.72rem; cursor:pointer; }
 .st-select:focus { border-color: var(--accent); }
 .st-toggle { width:34px; height:18px; border-radius:9px; border:none; cursor:pointer; position:relative; transition:background 0.2s; }

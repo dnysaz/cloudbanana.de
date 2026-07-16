@@ -224,66 +224,70 @@ All API endpoints are prefixed with `/api/v1/` and proxied through Nginx.
 
 ### Authentication
 
-| Method | Endpoint | Description | Rate Limit |
-|--------|----------|-------------|------------|
-| GET | `/auth/check` | Check if admin exists | - |
-| POST | `/auth/register` | Register first admin | 3/hour |
-| POST | `/auth/login` | Login | 10/minute |
-| POST | `/auth/logout` | Logout (revoke token) | - |
-| POST | `/auth/change-password` | Change password | 5/minute |
-| GET | `/auth/me` | Get current user profile | - |
-| GET | `/auth/users/public` | List users (public) | - |
-| GET | `/auth/users` | List all users (admin) | - |
-| POST | `/auth/users` | Create user (admin) | - |
-| PATCH | `/auth/users/{id}` | Update user (admin) | - |
-| GET | `/auth/avatar/{id}` | Get user avatar | - |
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | `/auth/check` | Check if admin exists | None |
+| POST | `/auth/register` | Register initial admin | None |
+| POST | `/auth/login` | Login (returns JWT) | None |
+| POST | `/auth/logout` | Logout and revoke token | User |
+| POST | `/auth/change-password` | Change own password | User |
+| GET | `/auth/me` | Get current user profile | User |
+| GET | `/auth/users/public` | List users for login picker | None |
+| GET | `/auth/users` | List all users | Admin |
+| POST | `/auth/users` | Create new user | Admin |
+| PATCH | `/auth/users/{user_id}` | Update user | Admin |
+| GET | `/auth/avatar/{user_id}` | Serve user avatar | None |
 
 ### System
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/system/stats` | System stats (CPU, RAM, Disk, Swap, Uptime, Network, Temperature) |
-| GET | `/system/processes` | List all running processes with resource usage |
-| GET | `/system/info` | System info (hostname, IP, OS, provider) |
-| GET | `/system/packages` | List all installed APT packages |
+| GET | `/system/stats` | System stats (CPU, RAM, Disk, Swap, Network, Temperature) |
+| GET | `/system/processes` | List running processes |
+| GET | `/system/info` | Hostname, IP, OS, provider |
+| GET | `/system/packages` | List installed APT packages |
 | POST | `/system/packages/remove` | Remove an APT package |
-| GET | `/server/ip` | Get server public IP |
-
-### File Manager
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/files?path=` | List directory contents |
-| POST | `/files/mkdir` | Create directory |
-| POST | `/files/upload` | Upload file |
-| POST | `/files/read` | Read file content |
-| POST | `/files/write` | Write file content (30/min) |
-| POST | `/files/remove` | Delete file/folder (30/min) |
-| POST | `/files/rename` | Rename file/folder |
-| POST | `/files/copy` | Copy file/folder |
-| POST | `/files/move` | Move file/folder |
-| POST | `/files/compress` | Compress to ZIP (10/min) |
-| POST | `/files/compress-multi` | Compress multiple items (10/min) |
-| POST | `/files/extract` | Extract ZIP file (10/min) |
-| GET | `/files/raw?path=` | Serve raw file |
-| POST | `/files/link` | Create shareable file link |
-| GET | `/files/raw/{id}` | Serve file by link ID |
-| PATCH | `/files/link/{id}` | Update file link |
-| GET | `/files/serve/{path}` | Serve file for WebView |
-| POST | `/trash/empty` | Empty user trash |
-| POST | `/trash/restore` | Restore file from trash |
 
 ### Software Center
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/apps/status` | Check status of all 49 apps |
-| POST | `/apps/install/{id}` | Install app by ID |
+| GET | `/apps/status` | Status of installable apps |
+| POST | `/apps/install/{app_id}` | Install a predefined app |
+| GET | `/apps/installed` | List custom installed apps |
+| GET | `/apps/install/status/{task_id}` | Install task status |
 | POST | `/apps/install` | Install app from Git URL |
-| POST | `/apps/install/upload` | Install app from uploaded ZIP |
-| GET | `/apps/installed` | List custom installed HTML apps |
-| DELETE | `/apps/installed/{name}` | Uninstall custom app |
-| GET | `/apps/install/status/{task_id}` | Check install task status |
+| POST | `/apps/install/upload` | Install from uploaded ZIP |
+| DELETE | `/apps/installed/{app_name}` | Uninstall custom app |
+
+### File Manager
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/files` | List directory contents |
+| POST | `/files/mkdir` | Create directory |
+| POST | `/files/upload` | Upload file (multipart) |
+| POST | `/files/read` | Read file content |
+| POST | `/files/write` | Write file content |
+| POST | `/files/remove` | Move to trash / delete |
+| POST | `/files/rename` | Rename file/folder |
+| POST | `/files/copy` | Copy file/folder |
+| POST | `/files/move` | Move file/folder |
+| POST | `/files/compress` | Compress to ZIP |
+| POST | `/files/compress-multi` | Compress multiple items |
+| POST | `/files/extract` | Extract ZIP archive |
+| POST | `/files/link` | Create shareable link |
+| PATCH | `/files/link/{file_id}` | Update file link |
+| GET | `/files/raw` | Download raw file |
+| GET | `/files/raw/{file_id}` | Download by link ID |
+| GET | `/files/serve/{path}` | Serve file for WebView |
+
+### Trash
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/trash/empty` | Empty trash |
+| POST | `/trash/restore` | Restore from trash |
 
 ### Web Server
 
@@ -291,84 +295,111 @@ All API endpoints are prefixed with `/api/v1/` and proxied through Nginx.
 |--------|----------|-------------|
 | GET | `/www` | List /var/www contents |
 | POST | `/www` | Create folder in /var/www |
-| POST | `/subdomain` | Create Nginx subdomain config |
-| POST | `/nginx/test` | Test Nginx configuration |
+| POST | `/subdomain` | Create subdomain vhost |
+| POST | `/nginx/test` | Test nginx configuration |
+
+### PHP
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
 | GET | `/php/versions` | List PHP versions and config files |
-| GET | `/cron` | Get current crontab |
+
+### Cron
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/cron` | Read current crontab |
 | POST | `/cron` | Update crontab |
-| GET | `/hosts` | Read /etc/hosts |
-| POST | `/hosts` | Write /etc/hosts |
 
 ### SSL Certificates
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/ssl/certificates` | List SSL certificates |
-| GET | `/ssl/domains` | List available domains from Nginx |
+| GET | `/ssl/domains` | List domains from Nginx |
 | GET | `/ssl/check-certbot` | Check if Certbot is installed |
 | POST | `/ssl/install-certbot` | Install Certbot |
 | POST | `/ssl/certificate` | Request Let's Encrypt certificate |
 
-### PM2 & Docker
+### PM2
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/pm2/processes` | List PM2 processes |
-| POST | `/pm2/action` | PM2 action (start/stop/restart/delete) |
-| * | `/docker/*` | Docker container management |
+| POST | `/pm2/action` | Start/stop/restart/delete PM2 process |
 
-### Database
+### Hosts
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/databases/servers` | List database servers |
-| POST | `/databases/query` | Execute database query |
-| GET | `/sql/tables` | List SQLite tables |
-| POST | `/sql/execute` | Execute SQLite SELECT query (30/min) |
+| GET | `/hosts` | Read /etc/hosts |
+| POST | `/hosts` | Write /etc/hosts |
+
+### Databases
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/databases/servers` | List MySQL/PostgreSQL servers |
+| POST | `/databases/query` | Execute SQL query on MySQL/PostgreSQL |
+
+### SQLite
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/sql/tables` | List tables and schemas |
+| POST | `/sql/execute` | Execute SELECT/PRAGMA query |
 
 ### Laravel
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/laravel/projects` | List Laravel projects |
-| GET | `/laravel/check-composer` | Check Composer installation |
+| GET | `/laravel/check-composer` | Check if Composer is installed |
+| POST | `/laravel/ensure-php` | Install PHP + required extensions |
 | POST | `/laravel/install-composer` | Install Composer |
-| POST | `/laravel/ensure-php` | Install/verify PHP + extensions |
-| POST | `/laravel/clone` | Clone Laravel project from Git |
+| POST | `/laravel/clone` | Clone Laravel repo from Git |
 | POST | `/laravel/upload-zip` | Upload Laravel project ZIP |
 | POST | `/laravel/extract` | Extract uploaded ZIP |
 | POST | `/laravel/composer-install` | Run composer install |
 | POST | `/laravel/copy-env` | Copy .env.example to .env |
 | PUT | `/laravel/save-env` | Save .env content |
-| POST | `/laravel/storage-link` | Create storage symlink |
+| POST | `/laravel/storage-link` | php artisan storage:link |
 | POST | `/laravel/app-key` | Generate app key |
 | POST | `/laravel/migrate` | Run database migrations |
 | POST | `/laravel/symlink` | Create public symlink |
 | POST | `/laravel/permissions` | Fix file permissions |
-| POST | `/laravel/assets-build` | Build frontend assets |
+| POST | `/laravel/assets-build` | npm/yarn install + build |
 | POST | `/laravel/vhost` | Create Nginx virtual host |
 | POST | `/laravel/env-read` | Read .env file content |
 | POST | `/laravel/final-check` | Final project health check |
-| GET | `/laravel/management` | Laravel project management status |
+| GET | `/laravel/management` | Laravel management dashboard |
 | POST | `/laravel/env-write` | Write .env file |
 | GET | `/laravel/php-versions` | List available PHP versions |
-| POST | `/laravel/{name}/migrate` | Run migrations with --force |
+| POST | `/laravel/{name}/migrate` | Run migrations (named project) |
 | POST | `/laravel/{name}/rollback` | Rollback migrations |
 | POST | `/laravel/{name}/fresh` | Migrate:fresh --seed |
 | POST | `/laravel/{name}/toggle` | Toggle site online/offline |
 | POST | `/laravel/{name}/php-version` | Change PHP version |
 | POST | `/laravel/{name}/domain` | Change domain/port |
 
+### Server
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/server/ip` | Get public IP address |
+
 ### Other
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/wget` | Start background wget download (10/min) |
+| POST | `/wget` | Download URL via wget (background) |
 | GET | `/wget/status/{task_id}` | Check download status |
-| GET | `/audit/logs` | List audit logs (last 500) |
 | GET | `/proxy/view/{path}` | BananaBrowser web proxy (GET) |
 | POST | `/proxy/view/{path}` | BananaBrowser web proxy (POST) |
 | WS | `/terminal/ws` | Terminal WebSocket (PTY bash) |
+| GET | `/audit/logs` | Audit logs (last 500 entries) |
+| GET | `/settings` | Get all settings |
+| POST | `/settings` | Update settings |
+| GET | `/settings/defaults` | Get default settings |
 | GET | `/{path}` | Serve React SPA (catch-all) |
 
 ---

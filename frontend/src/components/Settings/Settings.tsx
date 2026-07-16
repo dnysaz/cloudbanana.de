@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import type { User } from '../../types';
 import { api, getToken } from '../../api';
-import { useAuthStore } from '../../store/authStore';import { Palette, Type, Users, Info, Monitor, Terminal, RefreshCw, Package, UserPlus, Image, Trash, Trash2, AlertTriangle, X, Minus, Pencil, Eye, EyeOff, Scale, BookOpen, ChevronDown, ChevronRight, Copy, Check, Shield, Globe, Keyboard, ScrollText, Search, Clock, Sun, LogIn, Key, LayoutDashboard,
-} from 'lucide-react';
+import { useAuthStore } from '../../store/authStore';
+import { Palette, Type, Users, Info, Monitor, Terminal, RefreshCw, Package, UserPlus, Image, Trash, Trash2, AlertTriangle, X, Minus, Pencil, Eye, EyeOff, Scale, BookOpen, ChevronDown, ChevronRight, Copy, Check, Shield, Globe, Keyboard, ScrollText, Search, Clock, Sun, Moon, LogIn, Key, LayoutDashboard, Gauge } from 'lucide-react';
 import { useDesktopStore } from '../../store/desktopStore';
 import { WALLPAPERS } from '../../types';
 
@@ -16,6 +16,7 @@ function AppearanceTab() {
   const currentSize = localStorage.getItem('cb-size') || '14';
   const currentWinOpacity = localStorage.getItem('cb-win-opacity') || '0.92';
   const currentWp = localStorage.getItem('cb-wallpaper') || 'purple';
+  const [widgetsOn, setWidgetsOn] = useState(!!document.getElementById('win-widgets'));
 
   const toggleTheme = () => {
     const isDark = document.documentElement.classList.toggle('theme-dark');
@@ -56,9 +57,32 @@ function AppearanceTab() {
     <>
       <h3>Appearance</h3>
       <p>Customize the look and feel of your desktop</p>
-      <div className="st-row">
+      <div className="st-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}>
         <span className="st-label"><Palette size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Theme</span>
-        <button className={`st-toggle ${isDark ? 'on' : 'off'}`} onClick={toggleTheme} />
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={() => { if (isDark) { toggleTheme(); } }}
+            style={{
+              flex: 1, padding: '0.75rem', borderRadius: 'var(--radius-lg)',
+              border: isDark ? '2px solid var(--border-input)' : '2px solid var(--accent)',
+              background: isDark ? 'var(--bg-surface)' : 'var(--accent-light)',
+              color: isDark ? 'var(--text-secondary)' : 'var(--accent)',
+              cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s',
+            }}>
+            <Sun size={22} style={{ display: 'block', margin: '0 auto 0.25rem' }} />
+            <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>Light</div>
+          </button>
+          <button onClick={() => { if (!isDark) { toggleTheme(); } }}
+            style={{
+              flex: 1, padding: '0.75rem', borderRadius: 'var(--radius-lg)',
+              border: isDark ? '2px solid var(--accent)' : '2px solid var(--border-input)',
+              background: isDark ? 'var(--accent-light)' : 'var(--bg-surface)',
+              color: isDark ? 'var(--accent)' : 'var(--text-secondary)',
+              cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s',
+            }}>
+            <Moon size={22} style={{ display: 'block', margin: '0 auto 0.25rem' }} />
+            <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>Dark</div>
+          </button>
+        </div>
       </div>
       <div className="st-row">
         <div>
@@ -159,16 +183,19 @@ function AppearanceTab() {
           <div className="st-label"><LayoutDashboard size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Desktop Widgets</div>
           <div className="st-desc">System monitor widgets with glassmorphism style</div>
         </div>
-        <button className="fm-btn primary" onClick={() => {
-          const existing = document.getElementById('win-widgets');
-          if (existing) {
-            useDesktopStore.getState().closeWindow('widgets');
-          } else {
-            useDesktopStore.getState().openWindow('widgets', 'Widgets');
-          }
-        }}>
-          <LayoutDashboard size={13} /> Toggle Widgets
-        </button>
+        <button
+          className={`st-toggle ${widgetsOn ? 'on' : 'off'}`}
+          onClick={() => {
+            const existing = document.getElementById('win-widgets');
+            if (existing) {
+              useDesktopStore.getState().closeWindow('widgets');
+              setWidgetsOn(false);
+            } else {
+              useDesktopStore.getState().openWindow('widgets', 'Widgets');
+              setWidgetsOn(true);
+            }
+          }}
+        />
       </div>
       <div className="st-row">
         <div>
@@ -1869,181 +1896,225 @@ function ApiResourceTab() {
   return (
     <div>
       <h3>API Resource</h3>
-      <p>Complete API documentation for CloudBanana DE v0.1.0 — all endpoints are prefixed with <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>/api/v1</code></p>
+      <p>Complete API documentation for CloudBanana DE v0.1.0 &mdash; all endpoints are prefixed with <code style={{ fontSize: '0.65rem', background: 'var(--bg-surface)', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>/api/v1</code></p>
 
-      {/* Authentication */}
       <div style={sectionStyle}>
         {sectionHeader('auth', 'Authentication', 11)}
         {expandedSections.auth && <>
           {endpointRow('GET', '/auth/check', 'Check if admin exists', 'None')}
-          {endpointRow('POST', '/auth/register', 'Register admin (3/hour)', 'None')}
-          {endpointRow('POST', '/auth/login', 'Login (10/minute)', 'None')}
-          {endpointRow('GET', '/auth/me', 'Get current user', 'User')}
+          {endpointRow('POST', '/auth/register', 'Register initial admin', 'None')}
+          {endpointRow('POST', '/auth/login', 'Login (returns JWT)', 'None')}
           {endpointRow('POST', '/auth/logout', 'Logout & revoke token', 'User')}
-          {endpointRow('GET', '/auth/users/public', 'List users (public)', 'None')}
+          {endpointRow('POST', '/auth/change-password', 'Change own password', 'User')}
+          {endpointRow('GET', '/auth/me', 'Get current user profile', 'User')}
+          {endpointRow('GET', '/auth/users/public', 'List users for login picker', 'None')}
           {endpointRow('GET', '/auth/users', 'List all users', 'Admin')}
-          {endpointRow('POST', '/auth/users', 'Create user (10/hour)', 'Admin')}
-          {endpointRow('DELETE', '/auth/users/{user_id}', 'Delete user', 'Admin')}
-          {endpointRow('PATCH', '/auth/users/{user_id}', 'Edit user', 'Admin')}
-          {endpointRow('GET', '/auth/avatar/{user_id}', 'Get user avatar', 'None')}
+          {endpointRow('POST', '/auth/users', 'Create new user', 'Admin')}
+          {endpointRow('PATCH', '/auth/users/{user_id}', 'Update user', 'Admin')}
+          {endpointRow('GET', '/auth/avatar/{user_id}', 'Serve user avatar', 'None')}
         </>}
       </div>
 
-      {/* System */}
       <div style={sectionStyle}>
-        {sectionHeader('system', 'System', 8)}
+        {sectionHeader('system', 'System', 5)}
         {expandedSections.system && <>
           {endpointRow('GET', '/system/stats', 'CPU, RAM, disk, network', 'User')}
-          {endpointRow('GET', '/system/processes', 'List running processes', 'Admin')}
-          {endpointRow('GET', '/system/info', 'System/host info', 'Admin')}
-          {endpointRow('POST', '/system/apt', 'apt update/upgrade (5/hour)', 'Admin')}
-          {endpointRow('GET', '/system/apt/status/{task_id}', 'APT task status', 'Admin')}
-          {endpointRow('GET', '/system/packages', 'List installed packages', 'Admin')}
-          {endpointRow('POST', '/system/packages/remove', 'Remove package (10/hour)', 'Admin')}
-          {endpointRow('GET', '/system/packages/remove/status/{task_id}', 'Remove task status', 'Admin')}
+          {endpointRow('GET', '/system/processes', 'List running processes', 'User')}
+          {endpointRow('GET', '/system/info', 'Hostname, IP, OS info', 'User')}
+          {endpointRow('GET', '/system/packages', 'List installed apt packages', 'User')}
+          {endpointRow('POST', '/system/packages/remove', 'Remove an apt package', 'User')}
         </>}
       </div>
 
-      {/* Apps (Software Center) */}
       <div style={sectionStyle}>
-        {sectionHeader('apps', 'Applications / Software Center', 8)}
+        {sectionHeader('apps', 'Software Center', 7)}
         {expandedSections.apps && <>
-          {endpointRow('GET', '/apps/status', 'All installable apps + status', 'User')}
-          {endpointRow('POST', '/apps/install/{app_id}', 'Install app (10/hour)', 'Admin')}
-          {endpointRow('GET', '/apps/install/status/{task_id}', 'Install task status', 'Admin')}
+          {endpointRow('GET', '/apps/status', 'Status of installable apps', 'User')}
+          {endpointRow('POST', '/apps/install/{app_id}', 'Install a predefined app', 'User')}
           {endpointRow('GET', '/apps/installed', 'List custom installed apps', 'User')}
+          {endpointRow('GET', '/apps/install/status/{task_id}', 'Install task status', 'User')}
           {endpointRow('POST', '/apps/install', 'Install app from Git URL', 'User')}
-          {endpointRow('POST', '/apps/install/upload', 'Install app from ZIP', 'User')}
+          {endpointRow('POST', '/apps/install/upload', 'Install from uploaded ZIP', 'User')}
           {endpointRow('DELETE', '/apps/installed/{app_name}', 'Uninstall custom app', 'User')}
-          {endpointRow('GET', '/apps/install/status/{task_id}', 'Custom install status', 'User')}
         </>}
       </div>
 
-      {/* File Manager */}
       <div style={sectionStyle}>
-        {sectionHeader('files', 'File Manager', 15)}
+        {sectionHeader('files', 'File Manager', 17)}
         {expandedSections.files && <>
-          {endpointRow('GET', '/files', 'List directory (query: path)', 'User')}
+          {endpointRow('GET', '/files', 'List directory contents', 'User')}
           {endpointRow('POST', '/files/mkdir', 'Create directory', 'User')}
+          {endpointRow('POST', '/files/upload', 'Upload file (multipart)', 'User')}
           {endpointRow('POST', '/files/read', 'Read file content', 'User')}
           {endpointRow('POST', '/files/write', 'Write file content', 'User')}
+          {endpointRow('POST', '/files/remove', 'Move to trash / delete', 'User')}
           {endpointRow('POST', '/files/rename', 'Rename file/folder', 'User')}
           {endpointRow('POST', '/files/copy', 'Copy file/folder', 'User')}
           {endpointRow('POST', '/files/move', 'Move file/folder', 'User')}
-          {endpointRow('POST', '/files/upload', 'Upload file (multipart)', 'User')}
-          {endpointRow('GET', '/files/raw', 'Download raw file (query: path)', 'User')}
-          {endpointRow('GET', '/files/raw/{file_id}', 'Download by link ID', 'User')}
-          {endpointRow('GET', '/files/serve/{path}', 'Serve file for WebView', 'User')}
           {endpointRow('POST', '/files/compress', 'Compress to ZIP', 'User')}
           {endpointRow('POST', '/files/compress-multi', 'Compress multiple items', 'User')}
-          {endpointRow('POST', '/files/extract', 'Extract ZIP file', 'User')}
-          {endpointRow('POST', '/files/remove', 'Move to trash / delete', 'User')}
-        </>}
-      </div>
-
-      {/* File Links */}
-      <div style={sectionStyle}>
-        {sectionHeader('links', 'File Links', 2)}
-        {expandedSections.links && <>
-          {endpointRow('POST', '/files/link', 'Create shareable file link', 'User')}
+          {endpointRow('POST', '/files/extract', 'Extract ZIP archive', 'User')}
+          {endpointRow('POST', '/files/link', 'Create shareable link', 'User')}
           {endpointRow('PATCH', '/files/link/{file_id}', 'Update file link', 'User')}
+          {endpointRow('GET', '/files/raw', 'Download raw file', 'User')}
+          {endpointRow('GET', '/files/raw/{file_id}', 'Download by link ID', 'None')}
+          {endpointRow('GET', '/files/serve/{path}', 'Serve file for WebView', 'User')}
         </>}
       </div>
 
-      {/* Trash */}
       <div style={sectionStyle}>
-        {sectionHeader('trash', 'Trash', 3)}
+        {sectionHeader('trash', 'Trash', 2)}
         {expandedSections.trash && <>
-          {endpointRow('GET', '/trash', 'List trash contents', 'User')}
-          {endpointRow('POST', '/trash/empty', 'Empty trash (5/minute)', 'User')}
+          {endpointRow('POST', '/trash/empty', 'Empty trash', 'User')}
           {endpointRow('POST', '/trash/restore', 'Restore from trash', 'User')}
         </>}
       </div>
 
-      {/* WWW / Subdomain */}
       <div style={sectionStyle}>
-        {sectionHeader('www', 'WWW & Subdomain', 6)}
+        {sectionHeader('www', 'WWW & Subdomain', 4)}
         {expandedSections.www && <>
-          {endpointRow('GET', '/www', 'List /var/www', 'Admin')}
-          {endpointRow('POST', '/www', 'Create folder in /var/www', 'Admin')}
-          {endpointRow('GET', '/subdomain', 'List all subdomains', 'Admin')}
-          {endpointRow('POST', '/subdomain', 'Create subdomain (10/hour)', 'Admin')}
-          {endpointRow('DELETE', '/subdomain/{sub}/{domain}', 'Delete subdomain', 'Admin')}
-          {endpointRow('PATCH', '/subdomain/{sub}/{domain}', 'Update subdomain', 'Admin')}
+          {endpointRow('GET', '/www', 'List /var/www contents', 'User')}
+          {endpointRow('POST', '/www', 'Create folder in /var/www', 'User')}
+          {endpointRow('POST', '/subdomain', 'Create subdomain vhost', 'User')}
+          {endpointRow('POST', '/nginx/test', 'Test nginx configuration', 'User')}
         </>}
       </div>
 
-      {/* Docker */}
       <div style={sectionStyle}>
-        {sectionHeader('docker', 'Docker Manager', 14)}
-        {expandedSections.docker && <>
-          {endpointRow('GET', '/docker/check', 'Check Docker availability', 'Admin')}
-          {endpointRow('GET', '/docker/containers', 'List all containers', 'Admin')}
-          {endpointRow('POST', '/docker/containers/{id}/start', 'Start container', 'Admin')}
-          {endpointRow('POST', '/docker/containers/{id}/stop', 'Stop container', 'Admin')}
-          {endpointRow('POST', '/docker/containers/{id}/restart', 'Restart container', 'Admin')}
-          {endpointRow('DELETE', '/docker/containers/{id}', 'Remove container', 'Admin')}
-          {endpointRow('GET', '/docker/containers/{id}/logs', 'Container logs', 'Admin')}
-          {endpointRow('GET', '/docker/containers/{id}/stats', 'Container stats', 'Admin')}
-          {endpointRow('GET', '/docker/images', 'List Docker images', 'Admin')}
-          {endpointRow('POST', '/docker/images/pull', 'Pull image (10/hour)', 'Admin')}
-          {endpointRow('GET', '/docker/images/pull/status/{task_id}', 'Pull task status', 'Admin')}
-          {endpointRow('DELETE', '/docker/images/{image_id}', 'Remove image', 'Admin')}
-          {endpointRow('GET', '/docker/system/df', 'Docker disk usage', 'Admin')}
-          {endpointRow('POST', '/docker/prune', 'Prune unused resources (3/hour)', 'Admin')}
+        {sectionHeader('php', 'PHP', 1)}
+        {expandedSections.php && <>
+          {endpointRow('GET', '/php/versions', 'List PHP versions & config', 'User')}
         </>}
       </div>
 
-      {/* SQL Editor */}
       <div style={sectionStyle}>
-        {sectionHeader('sql', 'SQL Editor', 3)}
+        {sectionHeader('cron', 'Cron', 2)}
+        {expandedSections.cron && <>
+          {endpointRow('GET', '/cron', 'Read current crontab', 'User')}
+          {endpointRow('POST', '/cron', 'Update crontab', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('ssl', 'SSL Certificates', 5)}
+        {expandedSections.ssl && <>
+          {endpointRow('GET', '/ssl/certificates', 'List SSL certificates', 'User')}
+          {endpointRow('GET', '/ssl/domains', 'List domains from nginx', 'User')}
+          {endpointRow('GET', '/ssl/check-certbot', 'Check if certbot installed', 'User')}
+          {endpointRow('POST', '/ssl/install-certbot', 'Install certbot', 'User')}
+          {endpointRow('POST', '/ssl/certificate', 'Request SSL certificate', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('pm2', 'PM2', 2)}
+        {expandedSections.pm2 && <>
+          {endpointRow('GET', '/pm2/processes', 'List PM2 processes', 'User')}
+          {endpointRow('POST', '/pm2/action', 'Start/stop/restart/delete', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('hosts', 'Hosts', 2)}
+        {expandedSections.hosts && <>
+          {endpointRow('GET', '/hosts', 'Read /etc/hosts', 'User')}
+          {endpointRow('POST', '/hosts', 'Write /etc/hosts', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('databases', 'Databases', 2)}
+        {expandedSections.databases && <>
+          {endpointRow('GET', '/databases/servers', 'List DB servers & databases', 'User')}
+          {endpointRow('POST', '/databases/query', 'Execute SQL query', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('sql', 'SQLite Editor', 2)}
         {expandedSections.sql && <>
-          {endpointRow('POST', '/sql/execute', 'Execute SQL query', 'User')}
-          {endpointRow('GET', '/sql/tables', 'List database tables', 'User')}
-          {endpointRow('POST', '/sql/schema', 'Get table schemas', 'User')}
+          {endpointRow('GET', '/sql/tables', 'List tables & schemas', 'User')}
+          {endpointRow('POST', '/sql/execute', 'Execute SELECT/PRAGMA', 'User')}
         </>}
       </div>
 
-      {/* wget */}
       <div style={sectionStyle}>
-        {sectionHeader('wget', 'HTTP Downloader (wget)', 2)}
+        {sectionHeader('laravel', 'Laravel', 28)}
+        {expandedSections.laravel && <>
+          {endpointRow('GET', '/laravel/check-composer', 'Check composer installed', 'User')}
+          {endpointRow('POST', '/laravel/ensure-php', 'Install PHP + extensions', 'User')}
+          {endpointRow('POST', '/laravel/install-composer', 'Install composer', 'User')}
+          {endpointRow('POST', '/laravel/clone', 'Clone Laravel from Git', 'User')}
+          {endpointRow('POST', '/laravel/upload-zip', 'Upload Laravel ZIP', 'User')}
+          {endpointRow('POST', '/laravel/extract', 'Extract uploaded ZIP', 'User')}
+          {endpointRow('POST', '/laravel/composer-install', 'Run composer install', 'User')}
+          {endpointRow('POST', '/laravel/copy-env', 'Copy .env.example', 'User')}
+          {endpointRow('PUT', '/laravel/save-env', 'Save .env content', 'User')}
+          {endpointRow('POST', '/laravel/storage-link', 'php artisan storage:link', 'User')}
+          {endpointRow('POST', '/laravel/app-key', 'Generate app key', 'User')}
+          {endpointRow('POST', '/laravel/migrate', 'Run migrations', 'User')}
+          {endpointRow('POST', '/laravel/symlink', 'Create public symlink', 'User')}
+          {endpointRow('POST', '/laravel/permissions', 'Fix file permissions', 'User')}
+          {endpointRow('POST', '/laravel/assets-build', 'npm/yarn install + build', 'User')}
+          {endpointRow('POST', '/laravel/vhost', 'Create nginx vhost', 'User')}
+          {endpointRow('GET', '/laravel/projects', 'List Laravel projects', 'User')}
+          {endpointRow('POST', '/laravel/env-read', 'Read .env content', 'User')}
+          {endpointRow('POST', '/laravel/final-check', 'Project readiness check', 'User')}
+          {endpointRow('GET', '/laravel/management', 'Management dashboard data', 'User')}
+          {endpointRow('POST', '/laravel/env-write', 'Write .env file', 'User')}
+          {endpointRow('GET', '/laravel/php-versions', 'List PHP-FPM versions', 'User')}
+          {endpointRow('POST', '/laravel/{name}/migrate', 'Run migrations (named)', 'User')}
+          {endpointRow('POST', '/laravel/{name}/rollback', 'Rollback migrations', 'User')}
+          {endpointRow('POST', '/laravel/{name}/fresh', 'Fresh migrate + seed', 'User')}
+          {endpointRow('POST', '/laravel/{name}/toggle', 'Enable/disable vhost', 'User')}
+          {endpointRow('POST', '/laravel/{name}/php-version', 'Change PHP version', 'User')}
+          {endpointRow('POST', '/laravel/{name}/domain', 'Change domain/port', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('server', 'Server', 1)}
+        {expandedSections.server && <>
+          {endpointRow('GET', '/server/ip', 'Get public IP address', 'User')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('wget', 'HTTP Downloader', 2)}
         {expandedSections.wget && <>
-          {endpointRow('POST', '/wget', 'Download URL via wget (10/hour)', 'Admin')}
-          {endpointRow('GET', '/wget/status/{task_id}', 'Download task status', 'Admin')}
+          {endpointRow('POST', '/wget', 'Download URL via wget', 'User')}
+          {endpointRow('GET', '/wget/status/{task_id}', 'Download task status', 'User')}
         </>}
       </div>
 
-      {/* Git */}
-      <div style={sectionStyle}>
-        {sectionHeader('git', 'Git Cloner', 2)}
-        {expandedSections.git && <>
-          {endpointRow('POST', '/git/clone', 'Clone Git repository', 'User')}
-          {endpointRow('GET', '/git/clone/status/{task_id}', 'Clone task status', 'User')}
-        </>}
-      </div>
-
-      {/* Web Proxy */}
       <div style={sectionStyle}>
         {sectionHeader('proxy', 'Web Proxy (BananaBrowser)', 2)}
         {expandedSections.proxy && <>
-          {endpointRow('ANY', '/proxy', 'Proxy any URL (query: url)', 'User')}
-          {endpointRow('ANY', '/proxy/view/{path}', 'Proxy view route', 'User')}
+          {endpointRow('GET', '/proxy/view/{path}', 'Proxy GET request', 'User')}
+          {endpointRow('POST', '/proxy/view/{path}', 'Proxy POST request', 'User')}
         </>}
       </div>
 
-      {/* Terminal */}
       <div style={sectionStyle}>
         {sectionHeader('terminal', 'Terminal', 1)}
         {expandedSections.terminal && <>
-          {endpointRow('WS', '/terminal/ws', 'WebSocket PTY terminal', 'Admin')}
+          {endpointRow('WS', '/terminal/ws', 'WebSocket PTY terminal', 'User')}
         </>}
       </div>
 
-      {/* Audit */}
       <div style={sectionStyle}>
         {sectionHeader('audit', 'Audit Logs', 1)}
         {expandedSections.audit && <>
           {endpointRow('GET', '/audit/logs', 'Get audit logs (last 500)', 'Admin')}
+        </>}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader('settings', 'Settings', 3)}
+        {expandedSections.settings && <>
+          {endpointRow('GET', '/settings', 'Get all settings', 'User')}
+          {endpointRow('POST', '/settings', 'Update settings', 'User')}
+          {endpointRow('GET', '/settings/defaults', 'Get default settings', 'User')}
         </>}
       </div>
 
@@ -2056,9 +2127,187 @@ function ApiResourceTab() {
         marginTop: '0.5rem',
       }}>
         CloudBanana DE API v0.1.0 &mdash; Base URL: <code style={{ fontSize: '0.62rem', background: 'var(--bg-surface)', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>/api/v1</code>
-        &nbsp;&middot;&nbsp; Click <Copy size={10} style={{ verticalAlign: 'middle' }} /> to copy endpoint
+        &nbsp;&middot;&nbsp; {Object.keys(expandedSections).length} sections &middot; 100 total endpoints
       </div>
     </div>
+  );
+}
+
+function RateLimitsTab() {
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [msgType, setMsgType] = useState<'success' | 'error'>('success');
+
+  const loadSettings = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [saved, defaults] = await Promise.all([
+        api.get<Record<string, string>>('/settings'),
+        api.get<Record<string, string>>('/settings/defaults'),
+      ]);
+      const merged = { ...defaults };
+      for (const [k, v] of Object.entries(saved)) {
+        if (k in merged) merged[k] = v;
+      }
+      setSettings(merged);
+    } catch { setMsg('Failed to load settings'); setMsgType('error'); }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadSettings(); }, [loadSettings]);
+
+  const handleSave = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await api.post('/settings', { settings });
+      setMsgType('success'); setMsg('Settings saved successfully');
+    } catch (e) {
+      setMsgType('error'); setMsg(e instanceof Error ? e.message : 'Failed to save');
+    }
+    setSaving(false);
+  };
+
+  const handleReset = async () => {
+    setSaving(true); setMsg('');
+    try {
+      const defaults = await api.get<Record<string, string>>('/settings/defaults');
+      await api.post('/settings', { settings: defaults });
+      setSettings(defaults);
+      setMsgType('success'); setMsg('Settings reset to defaults');
+    } catch (e) {
+      setMsgType('error'); setMsg(e instanceof Error ? e.message : 'Failed to reset');
+    }
+    setSaving(false);
+  };
+
+  const rateLimitKeys = Object.entries(settings).filter(([k]) => k.startsWith('rate_limit_'));
+  const otherKeys = Object.entries(settings).filter(([k]) => !k.startsWith('rate_limit_'));
+
+  const parseRate = (value: string) => {
+    const m = value.match(/^(\d+)\/(\w+)$/);
+    return m ? { count: m[1], unit: m[2] } : { count: '10', unit: 'minute' };
+  };
+
+  if (loading) return <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', fontSize: '0.75rem' }}>Loading settings...</div>;
+
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+        <div>
+          <h3>Rate Limits & Security</h3>
+          <p>Configure API rate limits and security parameters</p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          <button className="fm-btn" onClick={handleReset} disabled={saving}>
+            <RefreshCw size={12} /> Reset
+          </button>
+          <button className="fm-btn primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`msg ${msgType}`} style={{ fontSize: '0.7rem', marginBottom: '0.5rem' }}>{msg}</div>
+      )}
+
+      <div style={{
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.75rem',
+        marginBottom: '1rem',
+      }}>
+        <div className="section-header" style={{ marginBottom: '0.5rem' }}>
+          <Gauge size={13} /> API Rate Limits
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+          {rateLimitKeys.map(([key, value]) => {
+            const { count, unit } = parseRate(value);
+            return (
+              <div key={key} className="st-row" style={{ padding: '0.25rem 0', minHeight: 'auto' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="st-label" style={{ fontSize: '0.68rem', textTransform: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {key.replace(/^rate_limit_/, '').replace(/_/g, ' ')}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                  <input
+                    type="number"
+                    min={0}
+                    className="st-input"
+                    value={count}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === '' || !isNaN(Number(v))) {
+                        setSettings(prev => ({ ...prev, [key]: `${v}/${unit}` }));
+                      }
+                    }}
+                    style={{ width: '3.5rem', textAlign: 'center', fontSize: '0.7rem' }}
+                  />
+                  <select
+                    className="st-select"
+                    value={unit}
+                    onChange={(e) => setSettings(prev => ({ ...prev, [key]: `${count}/${e.target.value}` }))}
+                    style={{ fontSize: '0.7rem', padding: '0.15rem 0.25rem', width: '5rem' }}
+                  >
+                    <option value="second">second</option>
+                    <option value="minute">minute</option>
+                    <option value="hour">hour</option>
+                    <option value="day">day</option>
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.75rem',
+      }}>
+        <div className="section-header" style={{ marginBottom: '0.5rem' }}>
+          <Shield size={13} /> Security Parameters
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+          {otherKeys.map(([key, value]) => {
+            const unit = key.match(/_(mb|seconds|minutes|hours|days)$/)?.[1];
+            const label = key.replace(/_/g, ' ');
+            return (
+              <div key={key} className="st-row" style={{ padding: '0.25rem 0', minHeight: 'auto' }}>
+                <div style={{ flex: 1 }}>
+                  <div className="st-label" style={{ fontSize: '0.68rem', textTransform: 'none' }}>
+                    {label}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <input
+                    className="st-input"
+                    type="number"
+                    min={0}
+                    value={value}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === '' || !isNaN(Number(v))) {
+                        setSettings(prev => ({ ...prev, [key]: v }));
+                      }
+                    }}
+                    style={{ width: unit ? '4rem' : '8rem', textAlign: 'center', fontSize: '0.7rem' }}
+                  />
+                  {unit && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{unit}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: 1.5 }}>
+          <strong>Note:</strong> Changes take effect after server restart.
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -2084,6 +2333,7 @@ export default function Settings() {
     { id: 'users', label: 'Users', icon: Users },
     { id: 'about', label: 'About', icon: Info },
     { id: 'license', label: 'License', icon: Scale },
+    { id: 'rate-limits', label: 'Rate Limits', icon: Gauge },
     { id: 'api', label: 'API Resource', icon: BookOpen },
   ];
 
@@ -2107,6 +2357,7 @@ export default function Settings() {
         {tab === 'users' && <UsersTab />}
         {tab === 'about' && <AboutTab />}
         {tab === 'license' && <LicenseTab />}
+        {tab === 'rate-limits' && <RateLimitsTab />}
         {tab === 'api' && <ApiResourceTab />}
       </div>
     </div>
