@@ -282,10 +282,52 @@ async def login(request: Request, body: LoginBody):
         # Successful login
         reset_lockout(body.username)
         token = create_access_token({"sub": user.username, "role": user.role})
-        add_audit_log("login_success", user.username, "", client_ip)
+        user_agent = request.headers.get("user-agent", "")
+        add_audit_log("login_success", user.username, user_agent[:500], client_ip)
         resp = JSONResponse({"access_token": token, "token_type": "bearer", "role": user.role})
         set_auth_cookies(resp, token)
         return resp
+
+@app.get("/api/v1/auth/last-access")
+async def get_last_access(user: User = Depends(get_current_user)):
+    """Return the last successful login info (IP, browser, timestamp)."""
+    with Session(engine) as session:
+        log = session.exec(
+            select(AuditLog).where(
+                AuditLog.username == user.username,
+                AuditLog.action == "login_success"
+            ).order_by(AuditLog.created_at.desc()).limit(1)
+        ).first()
+        if not log:
+            return {"ip": "", "browser": "", "timestamp": ""}
+        # Also get geolocation for the IP
+        location = ""
+        if log.ip_address:
+            try:
+                import urllib.request
+                loop = asyncio.get_running_loop()
+                def _fetch():
+                    req = urllib.request.Request(
+                        f"http://ip-api.com/json/{log.ip_address}?fields=status,country,city",
+                        headers={"User-Agent": "CloudBanana/1.0"})
+                    with urllib.request.urlopen(req, timeout=3) as resp:
+                        return json.loads(resp.read())
+                geo = await loop.run_in_executor(None, _fetch)
+                if geo.get("status") == "success":
+                    parts = []
+                    if geo.get("city"):
+                        parts.append(geo["city"])
+                    if geo.get("country"):
+                        parts.append(geo["country"])
+                    location = ", ".join(parts)
+            except Exception:
+                pass
+        return {
+            "ip": log.ip_address,
+            "browser": log.detail,
+            "timestamp": log.created_at.isoformat(),
+            "location": location,
+        }
 
 @app.post("/api/v1/auth/logout")
 async def logout(request: Request, user: User = Depends(get_current_user)):
@@ -1319,8 +1361,10 @@ async def remove_system_package(request: Request, body: RemovePkgBody, user: Use
 @app.get("/api/v1/system/info")
 async def get_system_info(user = Depends(get_current_user)):
     import socket
+    import psutil
     hostname = socket.gethostname()
     ip = "127.0.0.1"
+    ipv6 = ""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(1)
@@ -1329,22 +1373,107 @@ async def get_system_info(user = Depends(get_current_user)):
         s.close()
     except Exception:
         pass
-    provider = "Unknown"
-    for path, keyword in [("/sys/class/dmi/id/product_name", "product_name"),
-                           ("/sys/hypervisor/uuid", "hypervisor")]:
+    try:
+        s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s6.settimeout(1)
+        s6.connect(("2600::", 1))
+        ipv6 = s6.getsockname()[0]
+        s6.close()
+    except Exception:
+        ipv6 = ""
+    # IP geolocation via ip-api.com
+    location = ""
+    isp = ""
+    org = ""
+    try:
+        import urllib.request
+        loop = asyncio.get_running_loop()
+        def _fetch_geo():
+            req = urllib.request.Request(
+                f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org",
+                headers={"User-Agent": "CloudBanana/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return json.loads(resp.read())
+        geo = await loop.run_in_executor(None, _fetch_geo)
+        if geo.get("status") == "success":
+            parts = []
+            if geo.get("city"):
+                parts.append(geo["city"])
+            if geo.get("regionName"):
+                parts.append(geo["regionName"])
+            if geo.get("country"):
+                parts.append(geo["country"])
+            location = ", ".join(parts)
+            isp = geo.get("isp", "")
+            org = geo.get("org", "")
+    except Exception:
+        pass
+    provider = ""
+    for path in ["/sys/class/dmi/id/product_name", "/sys/class/dmi/id/sys_vendor",
+                  "/sys/hypervisor/uuid"]:
         try:
             v = Path(path).read_text().strip()
-            if v:
+            if v and "standard" not in v.lower():
                 provider = v
                 break
         except Exception:
             pass
+    boot = psutil.boot_time()
+    uptime = int(time.time() - boot)
+    mem = psutil.virtual_memory()
+    cpu_freq_obj = psutil.cpu_freq()
+    load_1, load_5, load_15 = psutil.getloadavg()
+    net = psutil.net_io_counters()
+    disk = psutil.disk_usage('/')
+    try:
+        cpu_model_name = Path("/proc/cpuinfo").read_text()
+        for line in cpu_model_name.splitlines():
+            if line.startswith("model name"):
+                cpu_model_name = line.split(":")[1].strip()
+                break
+        else:
+            cpu_model_name = ""
+    except Exception:
+        cpu_model_name = ""
+    try:
+        os_release = Path("/etc/os-release").read_text()
+        os_name = ""
+        for line in os_release.splitlines():
+            if line.startswith("PRETTY_NAME="):
+                os_name = line.split("=", 1)[1].strip().strip('"')
+        if not os_name:
+            os_name = f"{os.uname().sysname} {os.uname().release}"
+    except Exception:
+        os_name = f"{os.uname().sysname} {os.uname().release}"
     return {
         "version": "0.1.0",
         "hostname": hostname,
         "ip_address": ip,
+        "ipv6": ipv6,
         "provider": provider,
-        "os": os.uname().sysname + " " + os.uname().release,
+        "location": location,
+        "isp": isp,
+        "org": org,
+        "os": os_name,
+        "kernel": os.uname().release,
+        "architecture": os.uname().machine,
+        "cpu": f"{psutil.cpu_count()} vCores ({psutil.cpu_count(logical=False)} physical)",
+        "cpu_model": cpu_model_name,
+        "cpu_freq": f"{cpu_freq_obj.current:.0f} MHz" if cpu_freq_obj else "",
+        "load_1m": round(load_1, 2),
+        "load_5m": round(load_5, 2),
+        "load_15m": round(load_15, 2),
+        "total_ram_mb": round(mem.total / (1024 * 1024)),
+        "ram_used_mb": round(mem.used / (1024 * 1024)),
+        "ram_percent": mem.percent,
+        "swap_total_mb": round(psutil.swap_memory().total / (1024 * 1024)),
+        "disk_total_gb": round(disk.total / (1024**3), 1),
+        "disk_used_gb": round(disk.used / (1024**3), 1),
+        "disk_percent": disk.percent,
+        "net_bytes_sent_gb": round(net.bytes_sent / (1024**3), 2),
+        "net_bytes_recv_gb": round(net.bytes_recv / (1024**3), 2),
+        "uptime_seconds": uptime,
+        "processes": len(psutil.pids()),
     }
 
 # ========== PHP Editor ==========

@@ -905,93 +905,185 @@ function UsersTab() {
   );
 }
 
+function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: '0.35rem',
+      padding: '0.5rem 0 0.35rem',
+      fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase',
+      letterSpacing: '0.04em',
+      color: 'var(--text-secondary)',
+    }}>
+      <span style={{ color: 'var(--accent)', display: 'flex' }}>{icon}</span>
+      {label}
+    </div>
+  );
+}
+
+function InfoRow({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+      padding: compact ? '0.25rem 0' : '0.35rem 0',
+      borderBottom: '1px solid var(--border-subtle)',
+    }}>
+      <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', fontWeight: 500, paddingRight: '0.5rem' }}>{label}</span>
+      <span style={{
+        fontSize: '0.7rem', color: 'var(--text-primary)', fontWeight: 600,
+        textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all',
+      }}>{value}</span>
+    </div>
+  );
+}
+
 function AboutTab() {
-  const { user } = useAuthStore();
   const [info, setInfo] = useState<any>(null);
-  const [avatarFailed, setAvatarFailed] = useState(false);
+  const [lastAccess, setLastAccess] = useState<any>(null);
   useEffect(() => {
     api.get('/system/info').then(setInfo).catch(() => {});
+    api.get('/auth/last-access').then(setLastAccess).catch(() => {});
   }, []);
 
   const fmtUptime = (s: number) => {
     const d = Math.floor(s / 86400);
-    const h = Math.floor((s % 86400) / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return `${d}d ${h}h ${m}m`;
+    if (d > 0) return `${d}d ${Math.floor((s % 86400) / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    const h = Math.floor(s / 3600);
+    if (h > 0) return `${h}h ${Math.floor((s % 3600) / 60)}m ${s % 60}s`;
+    const m = Math.floor(s / 60);
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
   };
 
-  const rows = info ? [
-    { label: 'Hostname', value: info.hostname },
-    { label: 'IP Address', value: info.ip_address },
-    { label: 'IPv6', value: info.ipv6 },
-    { label: 'Location', value: info.location },
-    { label: 'Provider', value: info.provider },
-    { label: 'OS', value: info.os },
-    { label: 'CPU', value: info.cpu },
-    { label: 'RAM', value: info.total_ram_mb ? `${info.total_ram_mb} MB` : '-' },
-    { label: 'Uptime', value: fmtUptime(info.uptime_seconds || 0) },
-    { label: 'Version', value: info.version },
-  ] : [];
+  if (!info) {
+    return (
+      <div style={{ paddingTop: '0.25rem' }}>
+        <div style={{ textAlign: 'center', padding: '0.75rem 0 1rem' }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: 14,
+            background: 'var(--accent-light)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 0.6rem',
+          }}>
+            <Monitor size={30} style={{ color: 'var(--accent)' }} />
+          </div>
+          <h3 style={{ fontSize: '0.95rem', fontWeight: 600 }}>CloudBanana DE</h3>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Lightweight VPS Desktop Environment</p>
+          <a href="https://cloudbanana.de" target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: '0.68rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-block', marginTop: '0.25rem' }}>
+            cloudbanana.de ↗
+          </a>
+        </div>
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.72rem', padding: '1rem' }}>Loading...</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ paddingTop: '0.25rem' }}>
-      <div style={{ textAlign: 'center', padding: '0.75rem 0 1rem' }}>
-        {/* User Avatar */}
-        {user && (
-          <div style={{ marginBottom: '0.75rem' }}>
-            <div style={{
-              width: 64, height: 64, borderRadius: '50%',
-              background: 'var(--accent-light)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              margin: '0 auto 0.4rem',
-              overflow: 'hidden',
-              border: '2px solid var(--border-subtle)',
-            }}>
-              {user.avatar && !avatarFailed ? (
-                <img src={`/api/v1/auth/avatar/${user.id}`} alt=""
-                  style={{ width:'100%', height:'100%', objectFit:'cover' }}
-                  onError={() => setAvatarFailed(true)} />
-              ) : (
-                <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--accent)' }}>
-                  {(user.name || user.username)[0].toUpperCase()}
-                </span>
-              )}
-            </div>
-            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>{user.name || user.username}</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary)' }}>@{user.username}</div>
-          </div>
-        )}
+    <div style={{ paddingTop: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+      {/* Hero Header */}
+      <div style={{ textAlign: 'center', padding: '0.75rem 0 0.75rem' }}>
         <div style={{
-          width: 56, height: 56, borderRadius: 14,
+          width: 52, height: 52, borderRadius: 14,
           background: 'var(--accent-light)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 0.6rem',
+          margin: '0 auto 0.5rem',
+          transition: 'transform 0.2s',
         }}>
-          <Monitor size={30} style={{ color: 'var(--accent)' }} />
+          <Monitor size={28} style={{ color: 'var(--accent)' }} />
         </div>
-        <h3 style={{ fontSize: '0.95rem', fontWeight: 600 }}>CloudBanana DE</h3>
-        <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>Lightweight VPS Desktop Environment</p>
+        <h3 style={{ fontSize: '0.9rem', fontWeight: 600, margin: 0 }}>CloudBanana DE</h3>
+        <p style={{ fontSize: '0.68rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0.25rem' }}>Lightweight VPS Desktop Environment</p>
+        <div style={{ fontSize: '0.65rem', color: 'var(--accent)' }}>v{info.version || '-'}</div>
         <a href="https://cloudbanana.de" target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: '0.68rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-block', marginTop: '0.25rem' }}>
+          style={{ fontSize: '0.62rem', color: 'var(--accent)', textDecoration: 'none', display: 'inline-block', marginTop: '0.15rem', opacity: 0.7 }}>
           cloudbanana.de ↗
         </a>
       </div>
-      {info && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-          {rows.map((r, i) => (
-            <div key={r.label} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '0.6rem 0',
-              borderBottom: i < rows.length - 1 ? '1px solid var(--border-subtle)' : 'none',
-            }}>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{r.label}</span>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 600, textAlign: 'right', maxWidth: '60%', wordBreak: 'break-all' }}>{r.value}</span>
-            </div>
-          ))}
+
+      {/* Section 1: Server */}
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.4rem 0.75rem',
+      }}>
+        <SectionHeader icon={<Globe size={12} />} label="Server" />
+        <InfoRow label="Hostname" value={info.hostname || '-'} compact />
+        <InfoRow label="IP Address" value={info.ip_address || '-'} compact />
+        <InfoRow label="IPv6" value={info.ipv6 || '-'} compact />
+        <InfoRow label="Location" value={info.location || '-'} compact />
+        <InfoRow label="Hosting" value={info.isp || info.org || '-'} compact />
+        <div style={{ padding: '0.25rem 0' }}>
+          <InfoRow label="Provider" value={info.provider || '-'} compact />
         </div>
-      )}
-      {!info && (
-        <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.72rem', padding: '1rem' }}>Loading...</p>
+      </div>
+
+      {/* Section 2: Operating System */}
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.4rem 0.75rem',
+      }}>
+        <SectionHeader icon={<Terminal size={12} />} label="Operating System" />
+        <InfoRow label="OS" value={info.os || '-'} compact />
+        <InfoRow label="Kernel" value={info.kernel || '-'} compact />
+        <InfoRow label="Architecture" value={info.architecture || '-'} compact />
+        <div style={{ padding: '0.25rem 0' }}>
+          <InfoRow label="Uptime" value={fmtUptime(info.uptime_seconds || 0)} compact />
+        </div>
+      </div>
+
+      {/* Section 3: Hardware */}
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.4rem 0.75rem',
+      }}>
+        <SectionHeader icon={<Gauge size={12} />} label="Hardware" />
+        <InfoRow label="CPU" value={info.cpu || '-'} compact />
+        {info.cpu_model && <InfoRow label="Model" value={info.cpu_model} compact />}
+        {info.cpu_freq && <InfoRow label="Frequency" value={info.cpu_freq} compact />}
+        <InfoRow label="Load (1/5/15m)" value={`${info.load_1m ?? '-'} / ${info.load_5m ?? '-'} / ${info.load_15m ?? '-'}`} compact />
+        <InfoRow label="RAM" value={info.total_ram_mb ? `${info.total_ram_mb} MB (${info.ram_percent}% used)` : '-'} compact />
+        <div style={{ padding: '0.25rem 0' }}>
+          <InfoRow label="Swap" value={info.swap_total_mb ? `${info.swap_total_mb} MB` : '-'} compact />
+        </div>
+      </div>
+
+      {/* Section 4: Storage & Network */}
+      <div style={{
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '0.4rem 0.75rem',
+      }}>
+        <SectionHeader icon={<Monitor size={12} />} label="Storage & Network" />
+        <InfoRow label="Disk (/)" value={info.disk_total_gb ? `${info.disk_total_gb} GB (${info.disk_percent}% used)` : '-'} compact />
+        <InfoRow label="Network Sent" value={info.net_bytes_sent_gb ? `${info.net_bytes_sent_gb} GB` : '-'} compact />
+        <InfoRow label="Network Received" value={info.net_bytes_recv_gb ? `${info.net_bytes_recv_gb} GB` : '-'} compact />
+        <div style={{ padding: '0.25rem 0' }}>
+          <InfoRow label="Processes" value={`${info.processes ?? '-'} running`} compact />
+        </div>
+      </div>
+
+      {/* Last Access Section */}
+      {lastAccess && lastAccess.timestamp && (
+        <div style={{
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          padding: '0.4rem 0.75rem',
+        }}>
+          <SectionHeader icon={<Shield size={12} />} label="Last Access" />
+          <InfoRow label="IP Address" value={lastAccess.ip || '-'} compact />
+          {lastAccess.location && <InfoRow label="Location" value={lastAccess.location} compact />}
+          <InfoRow label="Browser" value={lastAccess.browser || '-'} compact />
+          <div style={{ padding: '0.25rem 0' }}>
+            <InfoRow label="Time" value={new Date(lastAccess.timestamp).toLocaleString()} compact />
+          </div>
+        </div>
       )}
     </div>
   );
