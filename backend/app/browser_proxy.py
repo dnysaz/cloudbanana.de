@@ -11,9 +11,7 @@ Key design goals:
 import re
 import html
 import httpx
-import time
 import ipaddress
-import threading
 from urllib.parse import urlparse, quote, urlunparse
 from fastapi import HTTPException
 from fastapi.responses import Response
@@ -55,51 +53,12 @@ NO_BASE_TAG_DOMAINS: set[str] = {"youtube.com", "www.youtube.com", "m.youtube.co
 CHROME_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
              "Chrome/125.0.0.0 Safari/537.36")
 
-# Per-session cookie jars for persistence
-_cookie_jars: dict[str, dict] = {}  # domain -> {client, last_used}
-_cookie_jars_lock = threading.Lock()
-_COOKIE_JAR_MAX_AGE = 3600  # 1 hour idle cleanup
-_COOKIE_JAR_MAX_SIZE = 50   # max domains before cleanup
-
-
+import asyncio
 import logging
 _logger = logging.getLogger("cloudbanana.proxy")
 
-def _cleanup_cookie_jars():
-    """Remove stale cookie jars to prevent memory leak."""
-    now = time.time()
-    with _cookie_jars_lock:
-        stale = [d for d, info in list(_cookie_jars.items())
-                 if now - info.get("last_used", 0) > _COOKIE_JAR_MAX_AGE]
-        for d in stale:
-            try:
-                info = _cookie_jars.pop(d, None)
-                if info and "client" in info:
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            loop.create_task(info["client"].aclose())
-                    except RuntimeError:
-                        _logger.warning(f"Event loop not available when closing client for {d}")
-            except Exception:
-                _logger.exception(f"Error closing client for {d}")
-        if len(_cookie_jars) > _COOKIE_JAR_MAX_SIZE:
-            sorted_domains = sorted(_cookie_jars.keys(),
-                                    key=lambda d: _cookie_jars[d].get("last_used", 0))
-            for d in sorted_domains[:len(_cookie_jars) - _COOKIE_JAR_MAX_SIZE]:
-                try:
-                    info = _cookie_jars.pop(d, None)
-                    if info and "client" in info:
-                        import asyncio
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                loop.create_task(info["client"].aclose())
-                        except RuntimeError:
-                            _logger.warning(f"Event loop not available when closing client for {d}")
-                except Exception:
-                    _logger.exception(f"Error closing client for {d}")
+# Semaphore to limit concurrent proxy requests (prevents resource exhaustion)
+_proxy_semaphore = asyncio.Semaphore(5)
 
 
 def _youtube_watch_to_embed(url: str) -> str:
@@ -405,49 +364,37 @@ try{{ window.parent.postMessage({{type:'proxy_nav',url:addToken(window.location.
     return html.encode("utf-8")
 
 
-def _get_client(target_url: str) -> httpx.AsyncClient:
-    """Get or create a cookie-preserving HTTP client for the target domain."""
-    parsed = urlparse(target_url)
-    domain = parsed.hostname or "unknown"
-
-    with _cookie_jars_lock:
-        if domain in _cookie_jars:
-            _cookie_jars[domain]["last_used"] = time.time()
-            return _cookie_jars[domain]["client"]
-
-        # Run cleanup periodically (every 5th new domain, or if > 40 jars)
-        if len(_cookie_jars) % 5 == 4 or len(_cookie_jars) >= 40:
-            _cleanup_cookie_jars()
-
-        _cookie_jars[domain] = {
-            "client": httpx.AsyncClient(
-                follow_redirects=True,
-                timeout=30.0,
-                cookies={},
-                limits=httpx.Limits(max_connections=10, max_keepalive_connections=3, keepalive_expiry=60.0),
-                headers={
-                    "User-Agent": CHROME_UA,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate",
-                    "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="125", "Chromium";v="125"',
-                    "Sec-Ch-Ua-Mobile": "?0",
-                    "Sec-Ch-Ua-Platform": '"Linux"',
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",
-                    "DNT": "1",
-                }
-            ),
-            "last_used": time.time(),
+def _make_client() -> httpx.AsyncClient:
+    """Create a fresh HTTP client for a single proxy request.
+    No persistent cookie jars — each request gets a clean client to prevent connection leaks.
+    """
+    return httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=30.0,
+        limits=httpx.Limits(max_connections=5, max_keepalive_connections=2, keepalive_expiry=30.0),
+        headers={
+            "User-Agent": CHROME_UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate",
+            "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="125", "Chromium";v="125"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Linux"',
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Upgrade-Insecure-Requests": "1",
+            "DNT": "1",
         }
-    return _cookie_jars[domain]["client"]
+    )
 
 
 async def _proxy_request(request, target_url: str, auth_token: str = ""):
-    """Core proxy logic: fetch target URL, rewrite HTML, return Response."""
+    """Core proxy logic: fetch target URL, rewrite HTML, return Response.
+    Uses fresh httpx client per request (no persistent cookie jars)
+    with hard 45-second timeout via asyncio.wait_for.
+    """
     from urllib.parse import urlparse, urlencode, parse_qs
 
     # Default to https if no scheme
@@ -464,77 +411,79 @@ async def _proxy_request(request, target_url: str, auth_token: str = ""):
     if _is_private_host(host):
         raise HTTPException(status_code=403, detail="Access to this host is blocked")
 
-    try:
-        client = _get_client(target_url)
-        method = request.method.lower()
+    async with _proxy_semaphore:
+        try:
+            async with asyncio.timeout(45):
+                client = _make_client()
+                try:
+                    method = request.method.lower()
 
-        # Forward relevant headers but override with Chrome UA
-        req_headers = {
-            "User-Agent": CHROME_UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": request.headers.get("accept-language", "en-US,en;q=0.9"),
-        }
+                    # Forward relevant headers but override with Chrome UA
+                    req_headers = {
+                        "User-Agent": CHROME_UA,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                        "Accept-Language": request.headers.get("accept-language", "en-US,en;q=0.9"),
+                    }
 
-        # Forward referer if available
-        ref = request.headers.get("referer", "")
-        if ref:
-            req_headers["Referer"] = ref
+                    # Forward referer if available
+                    ref = request.headers.get("referer", "")
+                    if ref:
+                        req_headers["Referer"] = ref
 
-        req_body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
+                    req_body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
 
-        # Stream response with max size limit to prevent memory exhaustion (10MB)
-        async with client.stream(method, target_url, headers=req_headers, content=req_body) as resp:
-            content_type = resp.headers.get("content-type", "").split(";")[0]
-            MAX_BODY = 10 * 1024 * 1024  # 10MB
-            content = b""
-            async for chunk in resp.aiter_bytes():
-                content += chunk
-                if len(content) > MAX_BODY:
-                    return _error_html_page(413, "Response Too Large", f"The response from {target_url} exceeds the maximum size of 10MB.", target_url)
+                    resp = await client.request(method, target_url, headers=req_headers, content=req_body)
 
-        # Rewrite HTML to proxy all URLs
-        if content_type == "text/html":
-            from urllib.parse import urlunparse
-            clean_url = urlunparse(urlparse(target_url)._replace(query="", fragment=""))
-            content = rewrite_html(
-                content.decode("utf-8", errors="replace"),
-                target_url,
-                proxy_base=proxy_view_url(clean_url, auth_token)
-            )
+                    content = resp.content
+                    content_type = resp.headers.get("content-type", "").split(";")[0]
 
-        # Strip frame-blocking headers
-        out_headers = {}
-        for k, v in resp.headers.items():
-            kl = k.lower()
-            if kl in ("x-frame-options", "content-security-policy", "content-security-policy-report-only",
-                      "strict-transport-security", "content-encoding", "transfer-encoding", "connection",
-                      "content-length"):
-                continue
-            out_headers[k] = v
+                    # Rewrite HTML to proxy all URLs
+                    if content_type == "text/html":
+                        from urllib.parse import urlunparse
+                        clean_url = urlunparse(urlparse(target_url)._replace(query="", fragment=""))
+                        content = rewrite_html(
+                            content.decode("utf-8", errors="replace"),
+                            target_url,
+                            proxy_base=proxy_view_url(clean_url, auth_token)
+                        )
 
-        resp_obj = Response(content=content, status_code=resp.status_code,
-                            headers=out_headers, media_type=resp.headers.get("content-type"))
+                    # Strip frame-blocking headers
+                    out_headers = {}
+                    for k, v in resp.headers.items():
+                        kl = k.lower()
+                        if kl in ("x-frame-options", "content-security-policy", "content-security-policy-report-only",
+                                  "strict-transport-security", "content-encoding", "transfer-encoding", "connection",
+                                  "content-length"):
+                            continue
+                        out_headers[k] = v
 
-        # Set cookie so catch-all route can redirect back if navigation escapes proxy
-        # This is a server-side safety net for SPA navigations that bypass our JS interceptors
-        from urllib.parse import quote as _q
-        resp_obj.set_cookie(
-            key="cb_target",
-            value=_q(target_url),
-            httponly=False,
-            samesite="strict",
-            max_age=3600,  # 1 hour
-            path="/",
-        )
+                    resp_obj = Response(content=content, status_code=resp.status_code,
+                                        headers=out_headers, media_type=resp.headers.get("content-type"))
 
-        return resp_obj
+                    # Set cookie so catch-all route can redirect back if navigation escapes proxy
+                    from urllib.parse import quote as _q
+                    resp_obj.set_cookie(
+                        key="cb_target",
+                        value=_q(target_url),
+                        httponly=False,
+                        samesite="strict",
+                        max_age=3600,
+                        path="/",
+                    )
 
-    except httpx.TimeoutException:
-        return _error_html_page(504, "Request Timed Out", f"The proxy timed out while trying to reach {target_url}. The site may be slow or unreachable.", target_url)
-    except httpx.ConnectError:
-        return _error_html_page(502, "Connection Failed", f"Could not connect to {target_url}. The site may be down or the address is incorrect.", target_url)
-    except Exception as e:
-        return _error_html_page(502, "Proxy Error", str(e), target_url)
+                    return resp_obj
+                finally:
+                    # Properly close the client to release connections
+                    await client.aclose()
+
+        except TimeoutError:
+            return _error_html_page(504, "Request Timed Out", f"The proxy timed out (45s) while trying to reach {target_url}. The site may be slow or unreachable.", target_url)
+        except httpx.TimeoutException:
+            return _error_html_page(504, "Request Timed Out", f"The proxy timed out while trying to reach {target_url}.", target_url)
+        except httpx.ConnectError:
+            return _error_html_page(502, "Connection Failed", f"Could not connect to {target_url}. The site may be down or the address is incorrect.", target_url)
+        except Exception as e:
+            return _error_html_page(502, "Proxy Error", str(e), target_url)
 
 
 def _error_html_page(status_code: int, title: str, message: str, target_url: str = "") -> Response:
