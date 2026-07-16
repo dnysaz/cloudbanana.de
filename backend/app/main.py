@@ -594,39 +594,55 @@ async def list_installed_apps(user: User = Depends(get_current_user)):
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     apps_dir = Path(home) / "applications"
     apps = []
-    if apps_dir.exists():
-        for child in sorted(apps_dir.iterdir()):
-            if child.is_dir():
-                manifest = child / "manifest.json"
-                html_file = None
-                for f in child.iterdir():
-                    if f.suffix == '.html':
-                        html_file = f
-                        break
-                if not html_file:
-                    continue
-                info = {"name": child.name, "title": child.name, "description": ""}
-                if manifest.exists():
-                    try:
-                        m = json.loads(manifest.read_text())
-                        info.update(m)
-                    except Exception:
-                        pass
-                icon_path = None
-                for ext in ['.svg', '.png', '.jpg', '.jpeg', '.webp']:
-                    ico = child / f"icon{ext}"
-                    if ico.exists():
-                        icon_path = str(ico)
-                        break
-                apps.append({
-                    "name": child.name,
-                    "title": info.get("title", info["name"]),
-                    "description": info.get("description", ""),
-                    "html_path": str(html_file),
-                    "icon_path": icon_path,
-                    "version": info.get("version", ""),
-                    "author": info.get("author", ""),
-                })
+    # Use sudo find to list app directories (may be owned by different user)
+    result = subprocess.run(
+        ["sudo", "bash", "-c", f"find {shlex.quote(str(apps_dir))} -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort"],
+        capture_output=True, text=True, timeout=15
+    )
+    for dir_path in result.stdout.strip().split('\n'):
+        if not dir_path.strip():
+            continue
+        child = Path(dir_path)
+        name = child.name
+        # Find HTML file via sudo find
+        html_result = subprocess.run(
+            ["sudo", "bash", "-c", f"find {shlex.quote(str(child))} -maxdepth 1 -name '*.html' -type f 2>/dev/null | head -1"],
+            capture_output=True, text=True, timeout=10
+        )
+        html_file = html_result.stdout.strip() if html_result.stdout.strip() else None
+        if not html_file:
+            continue
+        info = {"name": name, "title": name, "description": ""}
+        # Read manifest via sudo cat
+        manifest_result = subprocess.run(
+            ["sudo", "bash", "-c", f"cat {shlex.quote(str(child / 'manifest.json'))} 2>/dev/null"],
+            capture_output=True, text=True, timeout=10
+        )
+        if manifest_result.returncode == 0 and manifest_result.stdout.strip():
+            try:
+                m = json.loads(manifest_result.stdout)
+                info.update(m)
+            except Exception:
+                pass
+        # Find icon via sudo
+        icon_path = None
+        for ext in ['.svg', '.png', '.jpg', '.jpeg', '.webp']:
+            icon_check = subprocess.run(
+                ["sudo", "bash", "-c", f"test -f {shlex.quote(str(child / f'icon{ext}'))}"],
+                capture_output=True, timeout=5
+            )
+            if icon_check.returncode == 0:
+                icon_path = str(child / f"icon{ext}")
+                break
+        apps.append({
+            "name": name,
+            "title": info.get("title", info["name"]),
+            "description": info.get("description", ""),
+            "html_path": html_file,
+            "icon_path": icon_path,
+            "version": info.get("version", ""),
+            "author": info.get("author", ""),
+        })
     return {"apps": apps}
 
 @app.get("/api/v1/apps/install/status/{task_id}")
@@ -648,7 +664,8 @@ async def install_from_git(request: Request, body: InstallUrlBody, background_ta
     tid = secrets.token_hex(8)
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     apps_dir = Path(home) / "applications"
-    apps_dir.mkdir(parents=True, exist_ok=True)
+    # Use sudo to create directory (cloudbanana user may not have write permission)
+    subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(apps_dir))}"], capture_output=True, timeout=10)
     with _install_tasks_lock:
         _install_tasks[tid] = {"status": "running", "output": "Starting...\n", "_ts": time.time()}
     background_tasks.add_task(_do_git_install, tid, body.url, apps_dir)
@@ -662,25 +679,30 @@ async def install_from_upload(request: Request, body: InstallUploadBody, user: U
         raise HTTPException(status_code=400, detail="Uploaded file not found")
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     apps_dir = Path(home) / "applications"
-    apps_dir.mkdir(parents=True, exist_ok=True)
     dest_dir = apps_dir / body.app_name
-    if dest_dir.exists():
-        shutil.rmtree(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Use sudo for all filesystem operations (cloudbanana user lacks write permission)
+    subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))} && mkdir -p {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
     try:
         import zipfile
-        with zipfile.ZipFile(src, 'r') as zf:
-            _safe_extract(zf, dest_dir)
+        # Copy ZIP to /tmp first, then extract via sudo
+        tmp_zip = Path(f"/tmp/app_upload_{body.app_name}.zip")
+        shutil.copy2(src, tmp_zip)
+        subprocess.run(["sudo", "bash", "-c", f"unzip -o {shlex.quote(str(tmp_zip))} -d {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=30)
+        tmp_zip.unlink(missing_ok=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract ZIP: {str(e)}")
-    # Find HTML file and create manifest
-    html_files = list(dest_dir.glob("*.html")) or list(dest_dir.rglob("*.html"))
+    # Find HTML file and create manifest (use sudo find + cat)
+    result = subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(dest_dir))} -maxdepth 1 -name '*.html' -type f 2>/dev/null; find {shlex.quote(str(dest_dir))} -name '*.html' -type f 2>/dev/null | head -5"], capture_output=True, text=True, timeout=10)
+    html_files = [f for f in result.stdout.strip().split('\n') if f.strip()]
     if not html_files:
-        shutil.rmtree(dest_dir)
+        subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
         raise HTTPException(status_code=400, detail="No HTML file found in ZIP")
+    # Create manifest if not exists
     manifest_path = dest_dir / "manifest.json"
-    if not manifest_path.exists():
-        manifest_path.write_text(json.dumps({"name": body.app_name, "title": body.app_name, "description": "Installed from ZIP"}, indent=2))
+    manifest_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(manifest_path))}"], capture_output=True, timeout=5).returncode == 0
+    if not manifest_exists:
+        manifest_json = json.dumps({"name": body.app_name, "title": body.app_name, "description": "Installed from ZIP"}, indent=2)
+        subprocess.run(["sudo", "bash", "-c", f"cat > {shlex.quote(str(manifest_path))}"], input=manifest_json.encode(), capture_output=True, timeout=10)
     return {"status": "success", "message": f"App {body.app_name} installed"}
 
 @app.delete("/api/v1/apps/installed/{app_name}")
@@ -691,9 +713,14 @@ async def uninstall_app(request: Request, app_name: str, user: User = Depends(ge
         raise HTTPException(status_code=400, detail="Invalid app name")
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     app_dir = Path(home) / "applications" / app_name
-    if not app_dir.exists():
+    # Check if exists via sudo
+    exists = subprocess.run(["sudo", "bash", "-c", f"test -d {shlex.quote(str(app_dir))}"], capture_output=True, timeout=5).returncode == 0
+    if not exists:
         raise HTTPException(status_code=404, detail="App not found")
-    shutil.rmtree(app_dir)
+    # Use sudo to remove directory
+    result = subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(app_dir))}"], capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"Failed to uninstall app: {result.stderr}")
     return {"status": "success", "message": f"App {app_name} uninstalled"}
 
 def _do_git_install(tid: str, url: str, apps_dir: Path):
@@ -702,8 +729,9 @@ def _do_git_install(tid: str, url: str, apps_dir: Path):
     try:
         with _install_tasks_lock:
             _install_tasks[tid]["output"] += f"Cloning {url}...\n"
+        # Use sudo bash -c to clone (cloudbanana user may not have write permission)
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", "--", url, str(dest)],
+            ["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(dest.parent))} && git clone --depth 1 -- {shlex.quote(url)} {shlex.quote(str(dest))}"],
             capture_output=True, text=True, timeout=120
         )
         if result.returncode != 0:
@@ -713,21 +741,34 @@ def _do_git_install(tid: str, url: str, apps_dir: Path):
             return
         with _install_tasks_lock:
             _install_tasks[tid]["output"] += f"Cloned to {dest}\n"
-        html_files = list(dest.glob("*.html")) or list(dest.rglob("*.html"))
+        # Find HTML files via sudo find
+        find_result = subprocess.run(
+            ["sudo", "bash", "-c", f"find {shlex.quote(str(dest))} -maxdepth 1 -name '*.html' -type f 2>/dev/null; find {shlex.quote(str(dest))} -name '*.html' -type f 2>/dev/null | head -5"],
+            capture_output=True, text=True, timeout=10
+        )
+        html_files = [f for f in find_result.stdout.strip().split('\n') if f.strip()]
         if not html_files:
             with _install_tasks_lock:
                 _install_tasks[tid].update({"status": "error", "_ts": time.time()})
                 _install_tasks[tid]["output"] += "No HTML file found in repository\n"
-            shutil.rmtree(dest)
+            subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest))}"], capture_output=True, timeout=10)
             return
-        manifest_path = dest / "manifest.json"
-        if not manifest_path.exists():
-            manifest_path.write_text(json.dumps({
+        # Create manifest via sudo if not exists
+        manifest_exists = subprocess.run(
+            ["sudo", "bash", "-c", f"test -f {shlex.quote(str(dest / 'manifest.json'))}"],
+            capture_output=True, timeout=5
+        ).returncode == 0
+        if not manifest_exists:
+            manifest_json = json.dumps({
                 "name": repo_name, "title": repo_name,
                 "description": "Installed from " + url
-            }, indent=2))
+            }, indent=2)
+            subprocess.run(
+                ["sudo", "bash", "-c", f"cat > {shlex.quote(str(dest / 'manifest.json'))}"],
+                input=manifest_json.encode(), capture_output=True, timeout=10
+            )
         with _install_tasks_lock:
-            _install_tasks[tid]["output"] += f"Found {html_files[0].name}\n"
+            _install_tasks[tid]["output"] += f"Found {html_files[0].split('/')[-1]}\n"
             _install_tasks[tid].update({"status": "done", "_ts": time.time()})
             _install_tasks[tid]["output"] += "Install complete!\n"
     except subprocess.TimeoutExpired:
