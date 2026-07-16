@@ -51,7 +51,7 @@ export const useDesktopStore = create<DesktopState>()(
   winZIndex: 100,
   pendingTerminalCommand: null,
   tbSearchQuery: '',
-  pinnedApps: ['terminal','bnote','www','bananabrowser','taskmgr','settings','nginx-editor'],
+  pinnedApps: ['terminal','bnote','www','bananabrowser','taskmgr','settings','nginx-editor','bweb'],
   tbPinned: ['applications','www','taskmgr','terminal','trash'],
   tbPinnedOrder: ['applications','www','taskmgr','terminal','trash'],
   pinApp: (id) => set((s) => ({ pinnedApps: s.pinnedApps.includes(id) ? s.pinnedApps : [...s.pinnedApps, id] })),

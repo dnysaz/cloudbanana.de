@@ -51,6 +51,7 @@ const APP_COLORS: Record<string, string> = {
   'db-editor': 'linear-gradient(135deg, #ef4444, #f87171)',
   'laravel-wizard': 'linear-gradient(135deg, #f59e0b, #f97316)',
   'laravel-management': 'linear-gradient(135deg, #f59e0b, #f97316)',
+  'bweb': 'linear-gradient(135deg, #34aadc, #5ac8fa)',
 };
 
 const ALL_APPS: AppItem[] = [
@@ -61,6 +62,7 @@ const ALL_APPS: AppItem[] = [
   { id: 'gitcloner', title: 'Git Clone', icon: GitBranch, desc: 'Clone git repositories', category: 'dev' },
   { id: 'sqleditor', title: 'SQLite Editor', icon: Database, desc: 'Browse SQLite databases', category: 'dev' },
   { id: 'bananabrowser', title: 'Banana Browser', icon: Globe, desc: 'Web browser with proxy', category: 'internet' },
+  { id: 'bweb', title: 'WebView', icon: Globe, desc: 'Open HTML files & web apps in BWeb', category: 'internet' },
   { id: 'subdomain', title: 'Subdomain', icon: Globe, desc: 'Manage subdomains', category: 'internet' },
   { id: 'wget', title: 'Download', icon: Download, desc: 'Download files from URL', category: 'internet' },
   { id: 'bplayer', title: 'Media Player', icon: Film, desc: 'Media player', category: 'media' },

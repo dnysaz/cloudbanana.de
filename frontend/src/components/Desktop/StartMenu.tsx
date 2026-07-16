@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useDesktopStore } from '../../store/desktopStore';
 import { useAuthStore } from '../../store/authStore';
 import {
-  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText,
+  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText, Globe,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 
@@ -22,6 +22,7 @@ const REGULAR: AppItem[] = [
   { id: 'gitcloner', title: 'Git Clone', icon: Terminal, desc: 'Clone repos' },
   { id: 'sqleditor', title: 'SQLite Editor', icon: Terminal, desc: 'Browse databases' },
   { id: 'bananabrowser', title: 'Banana Browser', icon: Terminal, desc: 'Web browser' },
+  { id: 'bweb', title: 'WebView', icon: Globe, desc: 'Open HTML files & web apps' },
   { id: 'subdomain', title: 'Subdomain', icon: Terminal, desc: 'Manage subdomains' },
   { id: 'wget', title: 'Download', icon: Terminal, desc: 'Download files' },
   { id: 'bplayer', title: 'Media Player', icon: Terminal, desc: 'Media player' },
