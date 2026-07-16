@@ -46,8 +46,9 @@ async def csrf_middleware(request: Request, call_next):
         path = request.url.path
         if not path.startswith("/api/"):
             return await call_next(request)
-        # Skip CSRF for auth endpoints (login/register set the CSRF cookie)
-        if path in ("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/logout"):
+        # Skip CSRF for auth and serve endpoints
+        if path in ("/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/logout") \
+                or path.startswith("/api/v1/files/serve/"):
             return await call_next(request)
         # Graceful CSRF: only validate if the csrf_token cookie exists
         # The cookie is set by set_auth_cookies() during login (future enhancement).
@@ -1044,9 +1045,13 @@ def _make_fake_user(username: str, role: str):
     """Create a minimal user-like object for safe_path."""
     return type('FakeUser', (), {'username': username, 'role': role})()
 
-@app.get("/api/v1/files/serve/{serve_path:path}")
+@app.api_route("/api/v1/files/serve/{serve_path:path}", methods=["GET", "POST"])
 async def serve_file_for_webview(serve_path: str, request: Request, token: str = ""):
-    """Serve file for WebView/BWeb iframe. Auth via header, cookie, or query param token."""
+    """Serve file for WebView/BWeb iframe.
+    Supports GET (static files) and POST (PHP form submissions).
+    Auth via Authorization header, cookie, or query param token.
+    PHP files are executed through PHP CLI for correct output.
+    """
     # Try auth: Authorization header > cookie > query param token
     auth_token = ""
     auth = request.headers.get("authorization", "")
@@ -1071,7 +1076,83 @@ async def serve_file_for_webview(serve_path: str, request: Request, token: str =
     p = safe_path("/" + serve_path, fake_user) if not serve_path.startswith("/") else safe_path(serve_path, fake_user)
     if not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
-    data = subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
+
+    # ---- PHP file execution via CLI ----
+    if p.suffix.lower() == ".php":
+        # Build env vars for PHP CLI
+        script_name = f"/api/v1/files/serve/{serve_path}"
+        query_string = request.url.query
+        request_method = request.method
+        content_type = request.headers.get("content-type", "")
+        body_bytes = b""
+        if request.method == "POST":
+            body_bytes = await request.body()
+        host = request.headers.get("host", "localhost")
+        remote_addr = request.client.host if request.client else "127.0.0.1"
+        # Use sudo bash -c with inline env vars (sudo env requires password, bash -c is allowed)
+        php_file = shlex.quote(str(p))
+        env_str = " ".join(
+            f"{k}={shlex.quote(str(v))}"
+            for k, v in (
+                ("REQUEST_METHOD", request_method),
+                ("QUERY_STRING", query_string),
+                ("SCRIPT_NAME", script_name),
+                ("SCRIPT_FILENAME", str(p)),
+                ("REQUEST_URI", f"{script_name}?{query_string}" if query_string else script_name),
+                ("SERVER_NAME", host),
+                ("SERVER_PORT", "8888"),
+                ("HTTP_HOST", host),
+                ("REMOTE_ADDR", remote_addr),
+                ("CONTENT_TYPE", content_type),
+                ("CONTENT_LENGTH", str(len(body_bytes))),
+            )
+        )
+        shell_cmd = f"{env_str} php -f {php_file}"
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["sudo", "bash", "-c", shell_cmd],
+                input=body_bytes if request.method == "POST" else None,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0 and not result.stdout:
+                err_msg = result.stderr.decode("utf-8", errors="replace").strip()[:500]
+                logger.warning(f"PHP execution failed for {p}: {err_msg}")
+                # Fall back to serving raw PHP source
+                data = subprocess.run(
+                    ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
+                    capture_output=True, timeout=15
+                )
+                if data.returncode == 0:
+                    media_type, _ = mimetypes.guess_type(str(p))
+                    return Response(content=data.stdout, media_type=media_type or "application/octet-stream")
+                raise HTTPException(status_code=500, detail=f"PHP error: {err_msg}")
+            output = result.stdout.decode("utf-8", errors="replace")
+            # Detect content type: if output starts with <?, PHP didn't execute
+            media_type = "text/html; charset=utf-8"
+            if output.strip().startswith("<?"):
+                media_type = "text/plain; charset=utf-8"
+            return Response(content=output, media_type=media_type)
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="PHP execution timed out")
+        except FileNotFoundError:
+            # PHP not installed — fall back to serving raw source
+            logger.warning("PHP not found on system, serving raw file")
+            data = subprocess.run(
+                ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
+                capture_output=True, timeout=15
+            )
+            if data.returncode != 0:
+                raise HTTPException(status_code=500, detail="Failed to read file")
+            media_type, _ = mimetypes.guess_type(str(p))
+            return Response(content=data.stdout, media_type=media_type or "application/octet-stream")
+
+    # ---- Non-PHP files: serve raw content ----
+    data = subprocess.run(
+        ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
+        capture_output=True, timeout=30
+    )
     if data.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to read file")
     media_type, _ = mimetypes.guess_type(str(p))
