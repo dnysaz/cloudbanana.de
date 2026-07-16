@@ -5,7 +5,6 @@ Rewrite HTML to proxy all URLs and inject minimal anti-frame-busting JS.
 Key design goals:
 - Avoid triggering Google reCAPTCHA by using minimal, subtle overrides
 - Support complex sites like YouTube by handling <base> tag carefully
-- Persist cookies across requests for login sessions
 - Spoof real Chrome user-agent for maximum compatibility
 """
 import re
@@ -249,6 +248,16 @@ function proxyUrl(u){{
   return proxyPrefix+encodeURIComponent(encodeURIComponent(u));
 }}
 
+// Append auth token to all proxy URLs (used by all interceptors below)
+var authToken = {_json.dumps(_auth_token)};
+function addToken(u){{
+  if(authToken && u && u.startsWith(proxyPrefix) && u.indexOf('?token=')===-1){{
+    var sep=u.includes('?')?'&':'?';
+    return u+sep+'token='+encodeURIComponent(authToken);
+  }}
+  return u;
+}}
+
 // Intercept window.location and location.href via Proxy on the Location object.
 // Proxy catches location.href = '...', location.pathname = '...', location.assign(), etc.
 // Using Proxy avoids modifying Location.prototype (which triggers reCAPTCHA detection).
@@ -257,7 +266,7 @@ try{{
   var _locProxy = new Proxy(_loc, {{
     set: function(target, prop, value) {{
       if (typeof value === 'string') {{
-        target[prop] = proxyUrl(value);
+        target[prop] = addToken(proxyUrl(value));
       }} else {{
         target[prop] = value;
       }}
@@ -272,36 +281,28 @@ try{{
   // Also intercept location.assign / replace (safe — not detected by reCAPTCHA)
   window.location.assign = function(u) {{ _locProxy.href = u; }};
   window.location.replace = function(u) {{ _locProxy.href = u; }};
-}}catch(e){{}}    // Append auth token to all proxy URLs
-    var authToken = {_json.dumps(_auth_token)};
-    function addToken(u){{
-      if(authToken && u && u.startsWith(proxyPrefix) && u.indexOf('?token=')===-1){{
-        var sep=u.includes('?')?'&':'?';
-        return u+sep+'token='+encodeURIComponent(authToken);
-      }}
-      return u;
-    }}
+}}catch(e){{}}
 
-    // Intercept window.open
-    try{{
-      var _open=window.open;
-      window.open=function(u,n,f){{ return _open(addToken(proxyUrl(u)),n,f); }};
-    }}catch(e){{
-    }}
+// Intercept window.open
+try{{
+  var _open=window.open;
+  window.open=function(u,n,f){{ return _open(addToken(proxyUrl(u)),n,f); }};
+}}catch(e){{
+}}
 
-    // Intercept fetch API calls
-    var of=window.fetch.bind(window);
-    window.fetch=function(u,o){{
-      if(typeof u==='string'){{ u=addToken(proxyUrl(u)); }}
-      return of(u,o);
-    }};
+// Intercept fetch API calls
+var of=window.fetch.bind(window);
+window.fetch=function(u,o){{
+  if(typeof u==='string'){{ u=addToken(proxyUrl(u)); }}
+  return of(u,o);
+}};
 
-    // Intercept XMLHttpRequest
-    var OXHRP=XMLHttpRequest.prototype;
-    var oo=OXHRP.open;
-    OXHRP.open=function(m,u){{
-      return oo.apply(this,[m,addToken(proxyUrl(u))].concat([].slice.call(arguments,2)));
-    }};
+// Intercept XMLHttpRequest
+var OXHRP=XMLHttpRequest.prototype;
+var oo=OXHRP.open;
+OXHRP.open=function(m,u){{
+  return oo.apply(this,[m,addToken(proxyUrl(u))].concat([].slice.call(arguments,2)));
+}};
 
 // Intercept <a> clicks for cross-origin navigation
 document.addEventListener('click',function(e){{

@@ -35,8 +35,12 @@ function extractTarget(proxyUrl: string): string {
   const idx = proxyUrl.indexOf(PROXY_PREFIX);
   if (idx === -1) return proxyUrl;
   try {
-    // Decode twice to handle double-encoded URLs
+    // Strip auth token and other query params before decoding
     let s = proxyUrl.slice(idx + PROXY_PREFIX.length);
+    // Remove ?token=... query param (added by proxy for auth)
+    const qIdx = s.indexOf('?');
+    if (qIdx !== -1) s = s.slice(0, qIdx);
+    // Decode twice to handle double-encoded URLs
     s = decodeURIComponent(s);
     s = decodeURIComponent(s);
     return s;
