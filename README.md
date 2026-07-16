@@ -193,15 +193,18 @@ cloudbanana -v         # Show version
 │   │   ├── models.py            # SQLModel models (User, AuditLog, dll)
 │   │   ├── database.py          # SQLite connection + WAL mode
 │   │   ├── apps.py              # 49 software definitions + checker
+│   │   ├── settings_cache.py    # In-memory settings cache from DB
 │   │   ├── browser_proxy.py     # BananaBrowser HTML rewriting proxy
 │   │   ├── playwright_browser.py# Playwright headless Firefox engine
-│   │   └── utils/
-│   │       └── system.py        # System command utilities
+│   │   ├── utils/
+│   │   │   └── system.py        # System command utilities
+│   │   └── __init__.py
 │   ├── requirements.txt         # Python dependencies
 │   └── cloudbanana.db           # SQLite database
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx              # Main React app with window routing
+│   │   ├── main.tsx             # React entry point
 │   │   ├── api.ts               # HTTP client + auth token management
 │   │   ├── types.ts             # TypeScript types + wallpapers + app icons
 │   │   ├── style.css            # Full application styles (2500+ lines)
@@ -210,10 +213,16 @@ cloudbanana -v         # Show version
 │   │   │   ├── authStore.ts     # Zustand auth state
 │   │   │   └── desktopStore.ts  # Zustand desktop state (windows, taskbar)
 │   │   └── components/          # 30+ React components
-│   └── package.json
-├── scripts/                     # 49 installation shell scripts
-├── install.sh                   # Master installer
-└── cloudbanana.sh               # CLI management tool
+│   ├── vite.config.ts           # Vite bundler config
+│   ├── package.json             # npm dependencies
+│   └── tsconfig.json            # TypeScript config
+├── scripts/                     # 48 installation shell scripts
+├── install.sh                   # Master installer (Debian/Ubuntu)
+├── cloudbanana.sh               # CLI management tool
+├── cloudbanana.db               # SQLite database (active)
+├── .gitignore
+├── LICENSE                      # MIT License
+└── README.md                    # This file
 ```
 
 ---
