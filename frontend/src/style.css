@@ -1399,7 +1399,7 @@ input, button, textarea { font-family:inherit; outline:none; }
 
 /* BWeb (WebView) — remove padding and overflow so iframe fills the window */
 [id^="win-web-"] .win-body,
-[id^="app-"] .win-body {
+[id^="win-app-"] .win-body {
   padding: 0;
   overflow: hidden;
 }
