@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Globe, ArrowLeft, ArrowRight, RotateCw, X, Search, ExternalLink, Home } from 'lucide-react';
 import { useDesktopStore } from '../../store/desktopStore';
+import { getToken } from '../../api';
 
 interface Props {
   winId?: string;
@@ -22,7 +23,12 @@ function toProxyUrl(target: string): string {
     target = 'https://' + target;
   }
   // Double-encode to prevent browser from decoding ? and = into query string
-  return PROXY_PREFIX + encodeURIComponent(encodeURIComponent(target));
+  let url = PROXY_PREFIX + encodeURIComponent(encodeURIComponent(target));
+  const token = getToken();
+  if (token) {
+    url += '?token=' + encodeURIComponent(token);
+  }
+  return url;
 }
 
 function extractTarget(proxyUrl: string): string {

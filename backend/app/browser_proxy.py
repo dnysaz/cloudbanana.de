@@ -152,7 +152,12 @@ def _proxy_url(url: str, base: str) -> str:
     abs_u = _abs_url(url, base)
     # Convert YouTube /watch?v= to /embed/ for better iframe compatibility
     abs_u = _youtube_watch_to_embed(abs_u)
-    return f'{BP}/view/{quote(quote(abs_u, safe=""), safe="")}'
+    proxy_url = f'{BP}/view/{quote(quote(abs_u, safe=""), safe="")}'
+    # Append auth token if present (extracted from global/closure context)
+    _tok = getattr(rewrite_html, '_auth_token', '')
+    if _tok:
+        proxy_url += f'?token={_tok}'
+    return proxy_url
 
 
 def _should_skip_base_tag(target_url: str) -> bool:
@@ -174,6 +179,12 @@ def rewrite_html(html: str, base_url: str, proxy_base: str | None = None) -> byt
     parsed = urlparse(base_url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     pb = proxy_base or f'{BP}/view/{quote(base_url, safe="")}'
+    # Extract auth_token from proxy_base for URL rewriting
+    _auth_token = ""
+    if "?token=" in pb:
+        _auth_token = pb.split("?token=", 1)[1].split("&", 1)[0]
+    # Store so _proxy_url can access it during this rewrite pass
+    rewrite_html._auth_token = _auth_token
 
     # Strip XFO/CSP/Referrer meta tags (prevents frame-blocking & Referer stripping)
     # Using raw strings for regex patterns to avoid SyntaxWarning
@@ -302,34 +313,43 @@ try{{
   // Also intercept location.assign / replace (safe — not detected by reCAPTCHA)
   window.location.assign = function(u) {{ _locProxy.href = u; }};
   window.location.replace = function(u) {{ _locProxy.href = u; }};
-}}catch(e){{}}
+}}catch(e){{}}    // Append auth token to all proxy URLs
+    var authToken = {_json.dumps(_auth_token)};
+    function addToken(u){{
+      if(authToken && u && u.startsWith(proxyPrefix) && u.indexOf('?token=')===-1){{
+        var sep=u.includes('?')?'&':'?';
+        return u+sep+'token='+encodeURIComponent(authToken);
+      }}
+      return u;
+    }}
 
-// Intercept window.open
-try{{
-  var _open=window.open;
-  window.open=function(u,n,f){{ return _open(proxyUrl(u),n,f); }};
-}}catch(e){{}}
+    // Intercept window.open
+    try{{
+      var _open=window.open;
+      window.open=function(u,n,f){{ return _open(addToken(proxyUrl(u)),n,f); }};
+    }}catch(e){{
+    }}
 
-// Intercept fetch API calls
-var of=window.fetch.bind(window);
-window.fetch=function(u,o){{
-  if(typeof u==='string'){{ u=proxyUrl(u); }}
-  return of(u,o);
-}};
+    // Intercept fetch API calls
+    var of=window.fetch.bind(window);
+    window.fetch=function(u,o){{
+      if(typeof u==='string'){{ u=addToken(proxyUrl(u)); }}
+      return of(u,o);
+    }};
 
-// Intercept XMLHttpRequest
-var OXHRP=XMLHttpRequest.prototype;
-var oo=OXHRP.open;
-OXHRP.open=function(m,u){{
-  return oo.apply(this,[m,proxyUrl(u)].concat([].slice.call(arguments,2)));
-}};
+    // Intercept XMLHttpRequest
+    var OXHRP=XMLHttpRequest.prototype;
+    var oo=OXHRP.open;
+    OXHRP.open=function(m,u){{
+      return oo.apply(this,[m,addToken(proxyUrl(u))].concat([].slice.call(arguments,2)));
+    }};
 
 // Intercept <a> clicks for cross-origin navigation
 document.addEventListener('click',function(e){{
   var t=e.target.closest('a');
   if(!t||!t.href||t.target==='_blank')return;
   if(isProxied(t.href)||t.href.startsWith('javascript:')||t.href.startsWith('#')||t.href.startsWith('data:'))return;
-  var p=proxyUrl(t.href);
+  var p=addToken(proxyUrl(t.href));
   if(p!==t.href){{
     e.preventDefault();
     window.location.href=p;
@@ -342,7 +362,7 @@ document.addEventListener('submit',function(e){{
   var form=e.target;
   if(!form||!form.action)return;
   if(isProxied(form.action))return;
-  var p=proxyUrl(form.action);
+  var p=addToken(proxyUrl(form.action));
   if(p!==form.action){{
     e.preventDefault();
     var fd=new FormData(form);
@@ -357,22 +377,22 @@ document.addEventListener('submit',function(e){{
 try{{
   var _push=history.pushState;
   history.pushState=function(s,u,t){{
-    if(t){{ var p=proxyUrl(t); if(p!==t){{ _push.call(this,s,u,p); }} }}
+    if(t){{ var p=addToken(proxyUrl(t)); if(p!==t){{ _push.call(this,s,u,p); }} }}
     var r=_push.apply(this,arguments);
-    try{{ window.parent.postMessage({{type:'proxy_nav',url:window.location.href}},'*'); }}catch(ee){{}}
+    try{{ window.parent.postMessage({{type:'proxy_nav',url:addToken(window.location.href)}},'*'); }}catch(ee){{}}
     return r;
   }};
   var _rep=history.replaceState;
   history.replaceState=function(s,u,t){{
-    if(t){{ var p=proxyUrl(t); if(p!==t){{ _rep.call(this,s,u,p); }} }}
+    if(t){{ var p=addToken(proxyUrl(t)); if(p!==t){{ _rep.call(this,s,u,p); }} }}
     var r=_rep.apply(this,arguments);
-    try{{ window.parent.postMessage({{type:'proxy_nav',url:window.location.href}},'*'); }}catch(ee){{}}
+    try{{ window.parent.postMessage({{type:'proxy_nav',url:addToken(window.location.href)}},'*'); }}catch(ee){{}}
     return r;
   }};
 }}catch(e){{}}
 
 // Notify parent on new page load
-try{{ window.parent.postMessage({{type:'proxy_nav',url:window.location.href}},'*'); }}catch(e){{}}
+try{{ window.parent.postMessage({{type:'proxy_nav',url:addToken(window.location.href)}},'*'); }}catch(e){{}}
 }})();
 </script>"""
 
@@ -425,7 +445,7 @@ def _get_client(target_url: str) -> httpx.AsyncClient:
     return _cookie_jars[domain]["client"]
 
 
-async def _proxy_request(request, target_url: str):
+async def _proxy_request(request, target_url: str, auth_token: str = ""):
     """Core proxy logic: fetch target URL, rewrite HTML, return Response."""
     from urllib.parse import urlparse, urlencode, parse_qs
 
@@ -473,7 +493,7 @@ async def _proxy_request(request, target_url: str):
             content = rewrite_html(
                 content.decode("utf-8", errors="replace"),
                 target_url,
-                proxy_base=proxy_view_url(clean_url)
+                proxy_base=proxy_view_url(clean_url, auth_token)
             )
 
         # Strip frame-blocking headers
@@ -541,13 +561,16 @@ def _error_html_page(status_code: int, title: str, message: str, target_url: str
 
 
 # These functions are imported by main.py
-def proxy_view_url(target_url: str) -> str:
+def proxy_view_url(target_url: str, auth_token: str = "") -> str:
     """Convert a target URL to a proxy view path (with trailing / for <base> tag)."""
     from urllib.parse import quote, urlparse
     parsed = urlparse(target_url)
     if not parsed.query and not parsed.fragment and not target_url.endswith("/"):
         target_url += "/"
-    return f"{BP}/view/{quote(quote(target_url, safe=''), safe='')}"
+    url = f"{BP}/view/{quote(quote(target_url, safe=''), safe='')}"
+    if auth_token:
+        url += f"?token={auth_token}"
+    return url
 
 
 def extract_target_from_view(path: str) -> str | None:

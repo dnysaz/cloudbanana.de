@@ -2985,8 +2985,45 @@ async def terminal_ws(ws: WebSocket):
 
 # ========== BananaBrowser Web Proxy ==========
 
+async def _proxy_auth_user(request: Request, token: str = "") -> User | None:
+    """Authenticate user for proxy endpoints.
+    Checks: Authorization header > cookie > query param token.
+    Also checks JTI blacklist (revoked tokens).
+    Returns None if not authenticated.
+    """
+    from jose import jwt as jose_jwt
+    from app.auth import _SECRET_KEY, ALGORITHM
+    from app.models import TokenBlacklist
+    auth_token = ""
+    auth = request.headers.get("authorization", "")
+    if auth.startswith("Bearer "):
+        auth_token = auth[7:]
+    if not auth_token:
+        auth_token = request.cookies.get("token", "")
+    if not auth_token:
+        auth_token = token
+    if not auth_token:
+        return None
+    try:
+        payload = jose_jwt.decode(auth_token, _SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub", "")
+        jti = payload.get("jti", "")
+        with Session(engine) as session:
+            # Check JTI blacklist
+            if jti:
+                blacklisted = session.exec(select(TokenBlacklist).where(TokenBlacklist.jti == jti)).first()
+                if blacklisted:
+                    return None
+            user = session.exec(select(User).where(User.username == username)).first()
+            return user
+    except Exception:
+        return None
+
 @app.get("/api/v1/proxy/view/{path:path}")
-async def proxy_view(path: str, request: Request, user: User = Depends(get_current_user)):
+async def proxy_view(path: str, request: Request, token: str = ""):
+    user = await _proxy_auth_user(request, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     target_url = extract_target_from_view(f"/api/v1/proxy/view/{path}")
     if not target_url:
         raise HTTPException(status_code=400, detail="Invalid proxy URL")
@@ -2999,7 +3036,7 @@ async def proxy_view(path: str, request: Request, user: User = Depends(get_curre
     server_host = request.headers.get("host", "").split(":")[0]
     if parsed.hostname and parsed.hostname == server_host:
         raise HTTPException(status_code=400, detail="Cannot proxy the CloudBanana DE server itself")
-    return await _proxy_request(request, target_url)
+    return await _proxy_request(request, target_url, auth_token=token)
 
 # ========== Dynamic Settings API ==========
 
@@ -3076,11 +3113,14 @@ async def get_settings_defaults(user=Depends(get_current_user)):
 
 @app.post("/api/v1/proxy/view/{path:path}")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_proxy_view", "30/minute"))
-async def proxy_view_post(path: str, request: Request, user: User = Depends(get_current_user)):
+async def proxy_view_post(path: str, request: Request, token: str = ""):
+    user = await _proxy_auth_user(request, token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     target_url = extract_target_from_view(f"/api/v1/proxy/view/{path}")
     if not target_url:
         raise HTTPException(status_code=400, detail="Invalid proxy URL")
-    return await _proxy_request(request, target_url)
+    return await _proxy_request(request, target_url, auth_token=token)
 
 frontend_path = Path(__file__).resolve().parent.parent.parent / "frontend"
 # Prefer built assets (dist/) over source for production
