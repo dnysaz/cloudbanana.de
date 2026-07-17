@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { api } from '../../api';
 import { useDesktopStore } from '../../store/desktopStore';
-import { Package, File, CheckCircle, AlertCircle, Loader2, ArrowRight, ArrowLeft, Download, Info } from 'lucide-react';
+import { Package, File, CheckCircle, AlertCircle, Loader2, ArrowRight, ArrowLeft, Download, Info, FolderOpen } from 'lucide-react';
 
 interface DebInfo {
   package: string;
@@ -26,7 +26,7 @@ const STEP_INSTALL = 2;
 const STEP_DONE = 3;
 
 export default function DebInstaller(props: { winId?: string; winData?: Record<string, unknown> }) {
-  const { closeWindow } = useDesktopStore();
+  const { openWindow, closeWindow } = useDesktopStore();
   const [step, setStep] = useState(STEP_WELCOME);
   const [debPath, setDebPath] = useState((props.winData?.path as string) || '');
   const [debInfo, setDebInfo] = useState<DebInfo | null>(null);
@@ -35,6 +35,28 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
   const [installOutput, setInstallOutput] = useState('');
   const [installStatus, setInstallStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval>>(null);
+  const fmPickId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.path) {
+        setDebPath(detail.path);
+        if (fmPickId.current) {
+          closeWindow(fmPickId.current);
+          fmPickId.current = null;
+        }
+      }
+    };
+    document.addEventListener('fm-file-picked', handler);
+    return () => document.removeEventListener('fm-file-picked', handler);
+  }, [closeWindow]);
+
+  const browseFile = () => {
+    const id = 'fm-' + Date.now();
+    fmPickId.current = id;
+    openWindow(id, 'Select .deb Package', { pickMode: true });
+  };
 
   const getInfo = async () => {
     if (!debPath.trim()) return;
@@ -130,6 +152,10 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
                   onChange={(e) => setDebPath(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && getInfo()}
                 />
+                <button onClick={browseFile}
+                  style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #ccc', background: '#fff', color: '#333', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                  <FolderOpen size={14} /> Browse
+                </button>
               </div>
               {debPath && (
                 <div style={{ marginTop: 8, fontSize: 11, color: '#666', display: 'flex', alignItems: 'center', gap: 4 }}>
