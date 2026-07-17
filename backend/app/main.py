@@ -3,14 +3,14 @@ import pty, fcntl, struct, termios
 import psutil, mimetypes
 from datetime import datetime
 import logging
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Request, Response as FastResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlmodel import Session, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from app.utils.system import run_command
 from app.database import init_db, engine
 from app.models import User, AuditLog, TokenBlacklist, Setting, FileLink as FileLinkModel
@@ -27,6 +27,7 @@ from app import settings_cache
 from pathlib import Path
 from pydantic import BaseModel, field_validator
 from datetime import timedelta
+from contextlib import asynccontextmanager
 
 logger = logging.getLogger("cloudbanana.main")
 
@@ -87,6 +88,39 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
     expose_headers=["Content-Type"],
 )
+
+# ---- Request Timeout Middleware ----
+REQUEST_TIMEOUT = 120
+
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/v1/terminal/ws"):
+        return await call_next(request)
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=REQUEST_TIMEOUT)
+    except asyncio.TimeoutError:
+        logger.warning(f"Request timeout: {request.method} {request.url.path}")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Request timed out. Please try again."}
+        )
+
+def _db_retry(max_retries=3, delay=0.5):
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except OperationalError as e:
+                    if "database is locked" in str(e) and attempt < max_retries - 1:
+                        last_exc = e
+                        await asyncio.sleep(delay * (attempt + 1))
+                        continue
+                    raise
+            raise last_exc
+        return wrapper
+    return decorator
 
 # Max upload file size: 100 MB
 def _max_upload_bytes() -> int:
@@ -231,6 +265,17 @@ class UpdateUserBody(BaseModel):
         if v is not None and v not in ("admin", "user"):
             raise ValueError("Role must be admin or user")
         return v
+
+@app.get("/api/v1/health")
+async def health_check():
+    db_ok = False
+    try:
+        with Session(engine) as session:
+            session.exec(select(User).limit(1))
+            db_ok = True
+    except Exception:
+        pass
+    return {"status": "ok" if db_ok else "degraded", "database": "connected" if db_ok else "error"}
 
 @app.get("/api/v1/auth/check")
 async def check_admin_exists():
@@ -1673,38 +1718,44 @@ async def update_cron(request: Request, body: CronUpdateBody, user: User = Depen
 @app.get("/api/v1/ssl/certificates")
 async def list_ssl_certs(user: User = Depends(get_current_user)):
     certs = []
-    d = Path("/etc/letsencrypt/live")
-    if d.exists():
-        for domain_dir in sorted(d.iterdir()):
-            if not domain_dir.is_dir():
-                continue
-            cert_path = domain_dir / "fullchain.pem"
-            key_path = domain_dir / "privkey.pem"
-            info = {"domain": domain_dir.name, "cert_path": str(cert_path) if cert_path.exists() else "", "key_path": str(key_path) if key_path.exists() else "", "source": "letsencrypt"}
-            if cert_path.exists():
-                try:
-                    r = subprocess.run(["openssl", "x509", "-in", str(cert_path), "-noout", "-dates", "-subject", "-issuer"], capture_output=True, text=True, timeout=5)
-                    for line in r.stdout.strip().split("\n"):
-                        if "=" not in line:
-                            continue
-                        k, v = line.split("=", 1)
-                        info[k.lower()] = v.strip()
-                except Exception:
-                    pass
-                try:
-                    r = subprocess.run(["openssl", "x509", "-in", str(cert_path), "-noout", "-enddate"], capture_output=True, text=True, timeout=5)
-                    if "=" in r.stdout:
-                        enddate = r.stdout.split("=", 1)[1].strip()
-                        from datetime import datetime
-                        try:
-                            exp = datetime.strptime(enddate, "%b %d %H:%M:%S %Y %Z")
-                            info["expiry"] = exp.isoformat()
-                            info["days_left"] = (exp - datetime.utcnow()).days
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            certs.append(info)
+    # Use sudo to list letsencrypt directories (cloudbanana user may not have access)
+    listing = subprocess.run(
+        ["sudo", "bash", "-c", f"find /etc/letsencrypt/live -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort"],
+        capture_output=True, text=True, timeout=15
+    )
+    for domain_dir_str in listing.stdout.strip().split("\n"):
+        if not domain_dir_str.strip():
+            continue
+        domain_dir = Path(domain_dir_str)
+        cert_path = domain_dir / "fullchain.pem"
+        key_path = domain_dir / "privkey.pem"
+        cert_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(cert_path))}"], capture_output=True, timeout=5).returncode == 0
+        key_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(key_path))}"], capture_output=True, timeout=5).returncode == 0
+        info = {"domain": domain_dir.name, "cert_path": str(cert_path) if cert_exists else "", "key_path": str(key_path) if key_exists else "", "source": "letsencrypt"}
+        if cert_exists:
+            try:
+                r = subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-dates", "-subject", "-issuer"], capture_output=True, text=True, timeout=5)
+                for line in r.stdout.strip().split("\n"):
+                    if "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    info[k.lower()] = v.strip()
+            except Exception:
+                pass
+            try:
+                r = subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-enddate"], capture_output=True, text=True, timeout=5)
+                if "=" in r.stdout:
+                    enddate = r.stdout.split("=", 1)[1].strip()
+                    from datetime import datetime
+                    try:
+                        exp = datetime.strptime(enddate, "%b %d %H:%M:%S %Y %Z")
+                        info["expiry"] = exp.isoformat()
+                        info["days_left"] = (exp - datetime.utcnow()).days
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        certs.append(info)
     return {"certificates": certs}
 
 class CertRequest(BaseModel):
@@ -1716,14 +1767,23 @@ async def get_available_domains(user: User = Depends(get_current_user)):
     domains = set()
     config_dirs = ["/etc/nginx/sites-enabled", "/etc/nginx/conf.d", "/etc/nginx/sites-available"]
     for d in config_dirs:
-        p = Path(d)
-        if not p.exists():
-            continue
-        for f in p.iterdir():
-            if not f.is_file() and not f.is_symlink():
+        # Use sudo find to list files (cloudbanana user may not have access)
+        listing = subprocess.run(
+            ["sudo", "bash", "-c", f"find {shlex.quote(d)} -maxdepth 1 -type f -o -type l 2>/dev/null"],
+            capture_output=True, text=True, timeout=10
+        )
+        for config_path in listing.stdout.strip().split("\n"):
+            if not config_path.strip():
                 continue
             try:
-                text = f.read_text()
+                # Read via sudo cat
+                text_result = subprocess.run(
+                    ["sudo", "bash", "-c", f"cat {shlex.quote(config_path)}"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if text_result.returncode != 0:
+                    continue
+                text = text_result.stdout
                 for m in re.finditer(r'^\s*server_name\s+(.+?);', text, re.MULTILINE):
                     for name in m.group(1).split():
                         name = name.strip().rstrip(';')
@@ -1768,10 +1828,11 @@ async def request_cert(request: Request, body: CertRequest, user: User = Depends
     if body.email:
         email_flag = ["--email", body.email]
     # Stop nginx so standalone mode can bind port 80
-    subprocess.run(["systemctl", "stop", "nginx"], capture_output=True, timeout=15)
+    subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, timeout=15)
     try:
-        cmd = [certbot, "certonly", "--standalone", "--non-interactive", "--agree-tos", "-d", body.domain] + email_flag
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        # Use sudo bash -c for certbot (sudoers only allows bash -c for arbitrary commands)
+        certbot_cmd = f"{shlex.quote(certbot)} certonly --standalone --non-interactive --agree-tos -d {shlex.quote(body.domain)} {' '.join(shlex.quote(a) for a in email_flag)}"
+        r = subprocess.run(["sudo", "bash", "-c", certbot_cmd], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             detail = r.stderr or r.stdout or "Certbot failed"
             return {"status": "error", "message": detail.strip()}
@@ -1783,7 +1844,7 @@ async def request_cert(request: Request, body: CertRequest, user: User = Depends
         logger.exception(f"Unexpected error requesting certificate for {body.domain}")
         return {"status": "error", "message": "Certificate request failed unexpectedly"}
     finally:
-        subprocess.run(["systemctl", "start", "nginx"], capture_output=True, timeout=15)
+        subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, timeout=15)
 
 # ========== PM2 Manager ==========
 
@@ -2354,11 +2415,12 @@ async def laravel_vhost(request: Request, body: LaravelVhostBody, background_tas
     return result
 
 def _request_cert_for_domain(domain: str):
-    subprocess.run(["systemctl", "stop", "nginx"], capture_output=True, timeout=15)
+    subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, timeout=15)
     try:
-        subprocess.run(["certbot", "certonly", "--standalone", "--non-interactive", "--agree-tos", "-d", domain], capture_output=True, timeout=120)
+        # Use sudo bash -c for certbot (sudoers only allows bash -c for arbitrary commands)
+        subprocess.run(["sudo", "bash", "-c", f"certbot certonly --standalone --non-interactive --agree-tos -d {shlex.quote(domain)}"], capture_output=True, timeout=120)
     finally:
-        subprocess.run(["systemctl", "start", "nginx"], capture_output=True, timeout=15)
+        subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, timeout=15)
 
 @app.get("/api/v1/server/ip")
 async def get_server_ip(user: User = Depends(get_current_user)):

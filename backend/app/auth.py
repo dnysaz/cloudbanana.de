@@ -12,7 +12,7 @@ from starlette.responses import Response
 from sqlmodel import Session, select
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from app.database import engine
+from app.database import engine, db_retry
 from app.models import User, TokenBlacklist, AuditLog, Lockout
 from app import settings_cache
 
@@ -115,11 +115,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire, "jti": secrets.token_hex(16)})
     return jwt.encode(to_encode, _SECRET_KEY, algorithm=ALGORITHM)
 
+@db_retry()
+def _get_user_from_db(username: str):
+    with Session(engine) as session:
+        return session.exec(select(User).where(User.username == username)).first()
+
+@db_retry()
+def _check_token_blacklist(jti: str):
+    with Session(engine) as session:
+        return session.exec(select(TokenBlacklist).where(TokenBlacklist.jti == jti)).first()
+
 def get_current_user(request: Request = None, credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = None
     if credentials is not None:
         token = credentials.credentials
-    # Fallback to httpOnly cookie if no Authorization header (e.g. on page reload)
     if not token and request:
         token = request.cookies.get("token")
     if not token:
@@ -133,24 +142,22 @@ def get_current_user(request: Request = None, credentials: HTTPAuthorizationCred
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    # Check if token is blacklisted
     if jti:
-        with Session(engine) as session:
-            blacklisted = session.exec(select(TokenBlacklist).where(TokenBlacklist.jti == jti)).first()
-            if blacklisted:
-                raise HTTPException(status_code=401, detail="Token has been revoked")
+        blacklisted = _check_token_blacklist(jti)
+        if blacklisted:
+            raise HTTPException(status_code=401, detail="Token has been revoked")
 
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.username == username)).first()
-        if user is None:
-            raise HTTPException(status_code=401, detail="User not found")
-        return user
+    user = _get_user_from_db(username)
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
 
 def require_admin(user: User = Depends(get_current_user)):
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
+@db_retry()
 def check_account_locked(username: str) -> bool:
     """Check if an account is currently locked due to failed attempts."""
     with Session(engine) as session:
@@ -163,6 +170,7 @@ def check_account_locked(username: str) -> bool:
             session.commit()
     return False
 
+@db_retry()
 def record_failed_attempt(username: str):
     """Record a failed login attempt and lock account if threshold reached."""
     with Session(engine) as session:
@@ -176,6 +184,7 @@ def record_failed_attempt(username: str):
             logger.warning(f"Account locked due to {entry.failed} failed attempts: {username}")
         session.commit()
 
+@db_retry()
 def reset_lockout(username: str):
     """Reset lockout counter on successful login."""
     with Session(engine) as session:
@@ -184,6 +193,7 @@ def reset_lockout(username: str):
             session.delete(entry)
             session.commit()
 
+@db_retry()
 def revoke_token(jti: str, expires_at: datetime):
     """Add a token JTI to the blacklist."""
     with Session(engine) as session:
@@ -191,8 +201,8 @@ def revoke_token(jti: str, expires_at: datetime):
         session.add(entry)
         session.commit()
 
+@db_retry()
 def add_audit_log(action: str, username: str = "", detail: str = "", ip_address: str = ""):
-    """Log an audit event to the database."""
     with Session(engine) as session:
         log = AuditLog(action=action, username=username, detail=detail, ip_address=ip_address)
         session.add(log)

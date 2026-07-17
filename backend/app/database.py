@@ -1,9 +1,10 @@
 from sqlmodel import SQLModel, create_engine, Session
 from sqlalchemy import event
 from sqlalchemy.pool import NullPool
+from sqlalchemy.exc import OperationalError
 import asyncio
 from functools import wraps
-
+import time
 DATABASE_URL = "sqlite:///./cloudbanana.db"
 engine = create_engine(DATABASE_URL, echo=False, connect_args={"check_same_thread": False}, poolclass=NullPool)
 
@@ -36,3 +37,22 @@ def run_db(fn):
 
 def init_db():
     SQLModel.metadata.create_all(engine)
+
+
+def db_retry(max_retries=3, delay=0.3):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except OperationalError as e:
+                    if "database is locked" in str(e) and attempt < max_retries - 1:
+                        last_exc = e
+                        time.sleep(delay * (attempt + 1))
+                        continue
+                    raise
+            raise last_exc
+        return wrapper
+    return decorator
