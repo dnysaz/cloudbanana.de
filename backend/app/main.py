@@ -1491,12 +1491,18 @@ async def list_system_packages(user: User = Depends(get_current_user)):
                 continue
             parts = line.split('\t')
             if len(parts) >= 4:
-                name, ver, size, essential = parts[0], parts[1], parts[2], parts[3]
+                name, ver, size_str, essential = parts[0], parts[1], parts[2], parts[3]
                 removable = essential.strip().lower() != 'yes'
+                size_mb = 0.0
+                if size_str.strip():
+                    try:
+                        size_mb = round(int(size_str) / 1024, 1)
+                    except ValueError:
+                        pass
                 pkgs.append({
                     "name": name,
                     "version": ver,
-                    "size_mb": round(int(size) / 1024, 1),
+                    "size_mb": size_mb,
                     "removable": removable
                 })
         return pkgs
