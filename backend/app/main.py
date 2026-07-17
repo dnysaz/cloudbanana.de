@@ -2858,17 +2858,17 @@ def _get_sqlite_path(request_path: str | None = None, user: User | None = None) 
         except PermissionError:
             tmp = Path(f"/tmp/sqle_{p.name}")
             subprocess.run(["sudo", "cp", str(p), str(tmp)], capture_output=True, timeout=10)
-            subprocess.run(["sudo", "chmod", "644", str(tmp)], capture_output=True, timeout=5)
-            return str(tmp)
+        subprocess.run(["sudo", "chmod", "644", str(tmp)], capture_output=True, timeout=5)
+        logger.info(f"Copied SQLite DB {p} to {tmp} for reading")
+        return str(tmp)
     db_dir = Path(__file__).resolve().parent.parent
     return str(db_dir / "cloudbanana.db")
 
 def _get_table_info(db_path: str, table: str) -> dict:
-    """Get schema info for a single table."""
     conn = sqlite3_module.connect(db_path, timeout=5)
     conn.row_factory = sqlite3_module.Row
     try:
-        cursor = conn.execute("PRAGMA table_info(?)", (table,))
+        cursor = conn.execute(f"PRAGMA table_info(\"{table}\")")
         columns = []
         for row in cursor.fetchall():
             columns.append({
@@ -2878,11 +2878,9 @@ def _get_table_info(db_path: str, table: str) -> dict:
                 "default": row["dflt_value"],
                 "pk": bool(row["pk"]),
             })
-        # Row count
-        cursor = conn.execute("SELECT COUNT(*) FROM ?", (table,))
+        cursor = conn.execute(f"SELECT COUNT(*) FROM \"{table}\"")
         row_count = cursor.fetchone()[0]
-        # CREATE statement
-        cursor = conn.execute("SELECT sql FROM sqlite_master WHERE type=? AND name=?", ("table", table))
+        cursor = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,))
         row = cursor.fetchone()
         create_stmt = row[0] if row else None
         return {"columns": columns, "row_count": row_count, "create_stmt": create_stmt}
