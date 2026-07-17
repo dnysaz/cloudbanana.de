@@ -3,7 +3,7 @@ import { useDesktopStore } from '../../store/desktopStore';
 import { api } from '../../api';
 import {
   Terminal, Monitor, Settings, FileText, GitBranch, Database, Globe, Download,
-  Gamepad2, Film, Folder, Package, Container, Search, X,
+  Gamepad2, Film, Folder, Package, Container, Search, X, Code,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 
@@ -84,7 +84,7 @@ const ALL_APPS: AppItem[] = [
   { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects step-by-step', category: 'dev' },
   { id: 'laravel-management', title: 'Laravel Management', icon: LaravelIcon, desc: 'Monitor and manage Laravel projects', category: 'dev' },
   { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages with a step-by-step wizard', category: 'sys' },
-  { id: 'code-editor', title: 'Code Editor', icon: FileText, desc: 'Code editor with syntax highlighting', category: 'dev' },
+  { id: 'code-editor', title: 'Code Editor', icon: Code, desc: 'Code editor with syntax highlighting', category: 'dev' },
 ];
 
 function getAppGradient(id: string): string {

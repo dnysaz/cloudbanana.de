@@ -1371,7 +1371,7 @@ export default function FileManager({ winId, winData }: Props) {
               openWindow('code-editor-' + Date.now(), 'Code — ' + contextItem.name, { path: p });
               setContextItem(null);
             }}>
-              <FileText size={14} /> Open with Code Editor
+              <Code size={14} /> Open with Code Editor
             </button>
           )}
           <div className="ctx-sep" />

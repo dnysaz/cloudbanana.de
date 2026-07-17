@@ -4,7 +4,7 @@ import { useAuthStore } from '../../store/authStore';
 import type { WinState } from '../../types';
 import {
   Terminal, Folder, Grid, Trash2, Monitor, Maximize2,
-  FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield,
+  FileText, GitBranch, Database, Globe, Download, Gamepad2, Film, Package, Container, Shield, Code,
   Pin, X, Minus, Circle, LogOut, Settings,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
@@ -84,7 +84,7 @@ const APP_ICONS: Record<string, typeof Terminal> = {
   'laravel-wizard': LaravelIcon,
   'laravel-management': LaravelIcon,
   'deb-installer': Package,
-  'code-editor': FileText,
+  'code-editor': Code,
 };
 
 function getAppId(windowId: string): string {

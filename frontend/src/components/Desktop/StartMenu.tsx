@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useDesktopStore } from '../../store/desktopStore';
 import { useAuthStore } from '../../store/authStore';
 import {
-  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText, Globe, Package,
+  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText, Globe, Package, Code,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 
@@ -13,36 +13,37 @@ interface AppItem {
   desc: string;
 }
 
-const REGULAR: AppItem[] = [
-  { id: 'terminal', title: 'Terminal', icon: Terminal, desc: 'Command line shell' },
-  { id: 'taskmgr', title: 'Task Manager', icon: Terminal, desc: 'System resources' },
-  { id: 'settings', title: 'Settings', icon: Settings, desc: 'System preferences' },
+const _APPS: AppItem[] = [
+  { id: 'appinstaller', title: 'App Installer', icon: Terminal, desc: 'Install HTML apps' },
+  { id: 'bananabrowser', title: 'Banana Browser', icon: Terminal, desc: 'Web browser' },
   { id: 'bnote', title: 'BNote', icon: Terminal, desc: 'Text & code editor' },
+  { id: 'bweb', title: 'WebView', icon: Globe, desc: 'Open HTML files & web apps' },
+  { id: 'code-editor', title: 'Code Editor', icon: Code, desc: 'Code editor with syntax highlighting' },
+  { id: 'cron', title: 'Cron Manager', icon: FileText, desc: 'Manage cron jobs' },
+  { id: 'db-editor', title: 'Database Editor', icon: FileText, desc: 'Query MySQL/PostgreSQL' },
+  { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages' },
+  { id: 'dockermanager', title: 'Docker', icon: Terminal, desc: 'Manage containers' },
+  { id: 'wget', title: 'Download', icon: Terminal, desc: 'Download files' },
   { id: 'www', title: 'File Manager', icon: Terminal, desc: 'Browse files' },
   { id: 'gitcloner', title: 'Git Clone', icon: Terminal, desc: 'Clone repos' },
-  { id: 'sqleditor', title: 'SQLite Editor', icon: Terminal, desc: 'Browse databases' },
-  { id: 'bananabrowser', title: 'Banana Browser', icon: Terminal, desc: 'Web browser' },
-  { id: 'bweb', title: 'WebView', icon: Globe, desc: 'Open HTML files & web apps' },
-  { id: 'subdomain', title: 'Subdomain', icon: Terminal, desc: 'Manage subdomains' },
-  { id: 'wget', title: 'Download', icon: Terminal, desc: 'Download files' },
+  { id: 'host-editor', title: 'Hosts Editor', icon: FileText, desc: 'Edit /etc/hosts' },
+  { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects' },
+  { id: 'laravel-management', title: 'Laravel Manager', icon: LaravelIcon, desc: 'Monitor Laravel projects' },
   { id: 'bplayer', title: 'Media Player', icon: Terminal, desc: 'Media player' },
-  { id: 'snake', title: 'Snake', icon: Terminal, desc: 'Classic snake game' },
-  { id: 'pingpong', title: 'Ping Pong', icon: Terminal, desc: 'Table tennis' },
-  { id: 'dockermanager', title: 'Docker', icon: Terminal, desc: 'Manage containers' },
-  { id: 'apps', title: 'Software Center', icon: Terminal, desc: 'Install apps' },
-  { id: 'appinstaller', title: 'App Installer', icon: Terminal, desc: 'Install HTML apps' },
   { id: 'nginx-editor', title: 'Nginx Editor', icon: FileText, desc: 'Edit nginx configs' },
   { id: 'php-editor', title: 'PHP Editor', icon: FileText, desc: 'Edit PHP configs' },
-  { id: 'host-editor', title: 'Hosts Editor', icon: FileText, desc: 'Edit /etc/hosts' },
-  { id: 'cron', title: 'Cron Manager', icon: FileText, desc: 'Manage cron jobs' },
-  { id: 'ssl', title: 'SSL Certificates', icon: FileText, desc: 'View SSL certs' },
+  { id: 'pingpong', title: 'Ping Pong', icon: Terminal, desc: 'Table tennis' },
   { id: 'pm2', title: 'PM2 Manager', icon: FileText, desc: 'Manage PM2 processes' },
-  { id: 'db-editor', title: 'Database Editor', icon: FileText, desc: 'Query MySQL/PostgreSQL' },
-  { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects' },
-  { id: 'laravel-management', title: 'Laravel Management', icon: LaravelIcon, desc: 'Monitor Laravel projects' },
-  { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages' },
-  { id: 'code-editor', title: 'Code Editor', icon: FileText, desc: 'Code editor with syntax highlighting' },
+  { id: 'settings', title: 'Settings', icon: Settings, desc: 'System preferences' },
+  { id: 'snake', title: 'Snake', icon: Terminal, desc: 'Classic snake game' },
+  { id: 'apps', title: 'Software Center', icon: Terminal, desc: 'Install apps' },
+  { id: 'sqleditor', title: 'SQLite Editor', icon: Terminal, desc: 'Browse databases' },
+  { id: 'ssl', title: 'SSL Certificates', icon: FileText, desc: 'View SSL certs' },
+  { id: 'subdomain', title: 'Subdomain', icon: Terminal, desc: 'Manage subdomains' },
+  { id: 'taskmgr', title: 'Task Manager', icon: Terminal, desc: 'System resources' },
+  { id: 'terminal', title: 'Terminal', icon: Terminal, desc: 'Command line shell' },
 ];
+const REGULAR: AppItem[] = _APPS.sort((a, b) => a.title.localeCompare(b.title));
 
 export default function StartMenu() {
   const store = useDesktopStore();
