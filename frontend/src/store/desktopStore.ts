@@ -26,6 +26,8 @@ interface DesktopState {
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
   setWindowData: (id: string, data: Record<string, unknown>) => void;
+  setWindowPosition: (id: string, x: number, y: number) => void;
+  setWindowSize: (id: string, w: number, h: number) => void;
   toggleStartMenu: () => void;
   closeStartMenu: () => void;
   closeAllWindows: () => void;
@@ -129,20 +131,51 @@ export const useDesktopStore = create<DesktopState>()(
     const w = get().windows[id];
     if (!w) return;
     if (w.maximized) {
+      // Restore previous position/size saved in `restore`
+      const r = w.restore;
       set({
         windows: {
           ...get().windows,
-          [id]: { ...w, maximized: false, restore: null },
+          [id]: {
+            ...w,
+            maximized: false,
+            restore: null,
+            pos: r ? { x: r.x, y: r.y } : w.pos,
+            size: r ? { w: r.w, h: r.h } : w.size,
+          },
         },
       });
     } else {
+      // Save current position/size before maximizing
       set({
         windows: {
           ...get().windows,
-          [id]: { ...w, maximized: true, restore: { x: 100, y: 50, w: 600, h: 400 } },
+          [id]: {
+            ...w,
+            maximized: true,
+            restore: w.pos && w.size
+              ? { x: w.pos.x, y: w.pos.y, w: w.size.w, h: w.size.h }
+              : { x: 100, y: 50, w: 600, h: 400 },
+          },
         },
       });
     }
+  },
+
+  setWindowPosition: (id: string, x: number, y: number) => {
+    const w = get().windows[id];
+    if (!w) return;
+    set({
+      windows: { ...get().windows, [id]: { ...w, pos: { x, y } } },
+    });
+  },
+
+  setWindowSize: (id: string, w: number, h: number) => {
+    const win = get().windows[id];
+    if (!win) return;
+    set({
+      windows: { ...get().windows, [id]: { ...win, size: { w, h } } },
+    });
   },
 
   setWindowData: (id: string, data: Record<string, unknown>) => {

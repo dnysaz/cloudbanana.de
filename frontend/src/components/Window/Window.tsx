@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function Window({ id, title, children }: Props) {
-  const { windows, closeWindow, focusWindow, minimizeWindow, maximizeWindow } = useDesktopStore();
+  const { windows, closeWindow, focusWindow, minimizeWindow, maximizeWindow, setWindowPosition, setWindowSize } = useDesktopStore();
   const win = windows[id];
   const winRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ x: number; y: number; l: number; t: number } | null>(null);
@@ -39,8 +39,10 @@ export default function Window({ id, title, children }: Props) {
     } catch {}
   }
 
-  let sz = WIN_SIZES[id] || (id.startsWith('fm-') ? { w: 820, h: 540 } : id.startsWith('bnote-') ? { w: 1100, h: 720 } : id.startsWith('git-') ? { w: 560, h: 440 } : id.startsWith('web-') ? { w: 900, h: 640 } : id.startsWith('terminal-') ? { w: 900, h: 560 } : id === 'bananabrowser' ? { w: 1024, h: 700 } : id === 'applications' ? { w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) } : { w: 420, h: 320 });
-  if (savedSize) sz = savedSize;
+  // Use persisted size from store (if available), otherwise default
+  const storeSize = win.size;
+  let sz = storeSize || WIN_SIZES[id] || (id.startsWith('fm-') ? { w: 820, h: 540 } : id.startsWith('bnote-') ? { w: 1100, h: 720 } : id.startsWith('git-') ? { w: 560, h: 440 } : id.startsWith('web-') ? { w: 900, h: 640 } : id.startsWith('terminal-') ? { w: 900, h: 560 } : id === 'bananabrowser' ? { w: 1024, h: 700 } : id === 'applications' ? { w: Math.round(window.innerWidth * 0.8), h: Math.round(window.innerHeight * 0.8) } : { w: 420, h: 320 });
+  if (!storeSize && savedSize) sz = savedSize;
 
   const count = Object.keys(windows || {}).indexOf(id);
   const defaultLeft = isWidget
@@ -53,9 +55,11 @@ export default function Window({ id, title, children }: Props) {
     : id === 'applications'
       ? Math.round((window.innerHeight - sz.h) / 2)
       : Math.min(30 + count * 20, window.innerHeight - sz.h - 60);
-  const hasSaved = isWidget && savedSize !== null; // savedSize only non-null when JSON had data
-  const left = hasSaved ? savedPos.left : defaultLeft;
-  const top = hasSaved ? savedPos.top : defaultTop;
+  // Use persisted position from store (if available), otherwise default
+  const storePos = win.pos;
+  const hasSaved = isWidget && savedSize !== null;
+  const left = storePos ? storePos.x : (hasSaved ? savedPos.left : defaultLeft);
+  const top = storePos ? storePos.y : (hasSaved ? savedPos.top : defaultTop);
 
   // Helper to save widget position/size to localStorage on drag/resize end
   const saveWidgetState = () => {
@@ -117,6 +121,11 @@ export default function Window({ id, title, children }: Props) {
       dragListenersRef.current = null;
       // Save widget position after drag
       saveWidgetState();
+      // Save window position to store (persisted across reload)
+      if (!isWidget && winRef.current) {
+        const r = winRef.current.getBoundingClientRect();
+        setWindowPosition(id, Math.round(r.left), Math.round(r.top));
+      }
     };
     dragListenersRef.current = { mousemove: onMove, mouseup: onUp };
     document.addEventListener('mousemove', onMove);
@@ -155,6 +164,11 @@ export default function Window({ id, title, children }: Props) {
       resizeListenersRef.current = null;
       // Save widget size after resize
       saveWidgetState();
+      // Save window size to store (persisted across reload)
+      if (!isWidget && winRef.current) {
+        const r = winRef.current.getBoundingClientRect();
+        setWindowSize(id, Math.round(r.width), Math.round(r.height));
+      }
     };
     resizeListenersRef.current = { mousemove: onMove, mouseup: onUp };
     document.addEventListener('mousemove', onMove);
@@ -198,7 +212,15 @@ export default function Window({ id, title, children }: Props) {
               <button className="win-btn win-min" onClick={() => minimizeWindow(id)}><Minus size={13} /></button>
               {id !== 'snake' && id !== 'pingpong' && id !== 'wget' && (
                 <button className={`win-btn win-max${win.maximized ? ' win-max-active' : ''}`}
-                  onClick={() => maximizeWindow(id)}><Square size={11} /></button>
+                  onClick={() => {
+                    // Save current DOM position/size before maximizing (so restore is accurate)
+                    if (!win.maximized && winRef.current) {
+                      const r = winRef.current.getBoundingClientRect();
+                      setWindowPosition(id, Math.round(r.left), Math.round(r.top));
+                      setWindowSize(id, Math.round(r.width), Math.round(r.height));
+                    }
+                    maximizeWindow(id);
+                  }}><Square size={11} /></button>
               )}
             </div>
             <span className="win-title">{title}</span>

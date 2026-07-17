@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Globe, File, Folder, Upload, X, ChevronDown, Loader2 } from 'lucide-react';
+import { Globe, File, Folder, Upload, X, ChevronDown, Loader2, RotateCw } from 'lucide-react';
 import { getToken, api } from '../../api';
 import { useDesktopStore } from '../../store/desktopStore';
 
@@ -15,6 +15,7 @@ export default function BWeb({ winId, winData }: Props) {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [destPath, setDestPath] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -204,6 +205,16 @@ export default function BWeb({ winId, winData }: Props) {
             <Loader2 size={11} className="bweb-spin" /> {uploadStatus}
           </span>
         )}
+        {filePath && (
+          <button
+            className="bweb-refresh-btn"
+            style={{ marginLeft: 'auto' }}
+            onClick={() => setRefreshKey(prev => prev + 1)}
+            title="Refresh"
+          >
+            <RotateCw size={14} />
+          </button>
+        )}
       </div>
 
       {/* ===== Hidden file inputs ===== */}
@@ -250,6 +261,7 @@ export default function BWeb({ winId, winData }: Props) {
         </div>
       ) : (
         <iframe
+          key={refreshKey}
           className="bweb-frame"
           src={src}
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups"

@@ -545,8 +545,22 @@ export default function FileManager({ winId, winData }: Props) {
         // Double-click in pick mode = confirm selection
         if (now - last < 400) {
           document.dispatchEvent(new CustomEvent('fm-file-picked', { detail: { path: fullPath } }));
+          if (winId) closeWindow(winId);
         }
       }
+      return;
+    }
+
+    // Pick directory mode: navigate deeper on double-click, pick bar to confirm
+    if (pickDir) {
+      if (now - last < 400) {
+        if (isDir) {
+          navigate(name);
+        }
+        return;
+      }
+      selectOne(name);
+      lastClickedName.current = name;
       return;
     }
 
@@ -1327,10 +1341,15 @@ export default function FileManager({ winId, winData }: Props) {
             <span className="fm-pick-bar-name">{path}</span>
           </div>
           <div className="fm-pick-bar-actions">
-            <button className="fm-btn small" onClick={() => {
-              document.dispatchEvent(new CustomEvent('fm-dir-picked', { detail: { path } }));
-              if (winId) closeWindow(winId);
-            }}>
+            <button className="fm-btn small" onClick={() => { if (winId) closeWindow(winId); }}>Cancel</button>
+            <button className="fm-btn primary small" style={{ fontWeight: 600 }}
+              onClick={() => {
+                console.log('[Debug] pickDir: Select button clicked, path:', path, 'callback:', typeof (window as any).__cePickDir);
+                if (typeof (window as any).__cePickDir === 'function') {
+                  (window as any).__cePickDir(path);
+                }
+                if (winId) closeWindow(winId);
+              }}>
               <Check size={13} /> Select This Folder
             </button>
           </div>

@@ -110,6 +110,8 @@ export interface WinState {
   restore: { x: number; y: number; w: number; h: number } | null;
   zIndex: number;
   data?: Record<string, unknown>;
+  pos?: { x: number; y: number };
+  size?: { w: number; h: number };
 }
 
 export interface Wallpaper {

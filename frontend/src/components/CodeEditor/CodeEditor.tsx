@@ -5,10 +5,11 @@ import { useDesktopStore } from '../../store/desktopStore';
 import { useAuthStore } from '../../store/authStore';
 import type { FileItem } from '../../types';
 import {
-  Folder, File, FileCode, FileJson, FileType, FileTerminal, FileText, FileImage,
-  FileArchive, FileSpreadsheet, ChevronRight, ChevronDown, Save, X,
-  PanelLeftClose, PanelLeft, Info,
+  Folder, FileText, Save, X, Plus,
+  PanelLeftClose, PanelLeft, Info, FolderOpen, Terminal as TerminalIcon,
+  Trash2, Edit3, Copy, ExternalLink,
 } from 'lucide-react';
+import TerminalPanel from '../Terminal/Terminal';
 
 interface Props {
   winId?: string;
@@ -94,6 +95,32 @@ function getLang(filename: string): string {
   return LANG_MAP[ext] || 'plaintext';
 }
 
+/** File icon colors by extension for sidebar tree */
+const FILE_ICON_COLORS: Record<string, string> = {
+  js: '#ca8a04', jsx: '#ca8a04', mjs: '#ca8a04',
+  ts: '#2563eb', tsx: '#2563eb',
+  py: '#2563eb', rb: '#dc2626', go: '#0891b2', rs: '#d97706',
+  c: '#4f46e5', cpp: '#4f46e5', h: '#6366f1', java: '#dc2626',
+  php: '#7c3aed', swift: '#f97316', kt: '#7c3aed', dart: '#0891b2',
+  html: '#ea580c', htm: '#ea580c', css: '#db2777', scss: '#db2777', less: '#db2777',
+  json: '#059669', xml: '#0d9488', yaml: '#b45309', yml: '#b45309', toml: '#b45309',
+  md: '#1e293b', sql: '#e11d48', sh: '#16a34a', bash: '#16a34a', zsh: '#16a34a',
+  txt: '#64748b', env: '#1d4ed8', cfg: '#4b5563', ini: '#4b5563', conf: '#4b5563',
+  pdf: '#dc2626', csv: '#16a34a', log: '#64748b',
+  zip: '#d97706', tar: '#92400e', gz: '#92400e', rar: '#92400e', '7z': '#92400e',
+  mp4: '#7c3aed', avi: '#7c3aed', mkv: '#7c3aed', webm: '#7c3aed', mov: '#7c3aed',
+  mp3: '#16a34a', wav: '#059669', flac: '#059669', ogg: '#059669',
+  png: '#c084fc', jpg: '#c084fc', jpeg: '#c084fc', gif: '#c084fc', svg: '#0d9488',
+  webp: '#c084fc', bmp: '#c084fc', ico: '#c084fc',
+  dockerfile: '#2563eb',
+};
+
+function getFileIconColor(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  if (name.toLowerCase() === 'dockerfile') return '#2563eb';
+  return FILE_ICON_COLORS[ext] || '#569cd6';
+}
+
 interface OpenTab {
   path: string;
   name: string;
@@ -103,105 +130,15 @@ interface OpenTab {
   saved: boolean;
 }
 
-interface TreeNode {
-  name: string;
-  path: string;
-  is_dir: boolean;
-  expanded: boolean;
-  children: TreeNode[];
-  loading?: boolean;
-}
-
-const FILE_ICON_MAP: Record<string, { icon: typeof FileCode; color: string }> = {
-  js: { icon: FileCode, color: '#f7df1e' },
-  jsx: { icon: FileCode, color: '#f7df1e' },
-  mjs: { icon: FileCode, color: '#f7df1e' },
-  ts: { icon: FileCode, color: '#3178c6' },
-  tsx: { icon: FileCode, color: '#3178c6' },
-  py: { icon: FileCode, color: '#3776ab' },
-  rb: { icon: FileCode, color: '#cc342d' },
-  go: { icon: FileCode, color: '#00add8' },
-  rs: { icon: FileCode, color: '#dea584' },
-  java: { icon: FileCode, color: '#b07219' },
-  php: { icon: FileCode, color: '#777bb4' },
-  html: { icon: FileCode, color: '#e44d26' },
-  htm: { icon: FileCode, color: '#e44d26' },
-  css: { icon: FileType, color: '#2965f1' },
-  scss: { icon: FileType, color: '#c6538c' },
-  less: { icon: FileType, color: '#1d365d' },
-  json: { icon: FileJson, color: '#5a5a5a' },
-  xml: { icon: FileCode, color: '#0060ac' },
-  svg: { icon: FileCode, color: '#ffb13b' },
-  sh: { icon: FileTerminal, color: '#4d4d4d' },
-  bash: { icon: FileTerminal, color: '#4d4d4d' },
-  zsh: { icon: FileTerminal, color: '#4d4d4d' },
-  sql: { icon: FileCode, color: '#e38c00' },
-  md: { icon: FileText, color: '#666' },
-  yaml: { icon: FileCode, color: '#6ba5b0' },
-  yml: { icon: FileCode, color: '#6ba5b0' },
-  toml: { icon: FileCode, color: '#8c8c8c' },
-  ini: { icon: FileCode, color: '#8c8c8c' },
-  cfg: { icon: FileCode, color: '#8c8c8c' },
-  conf: { icon: FileCode, color: '#8c8c8c' },
-  csv: { icon: FileSpreadsheet, color: '#217346' },
-  env: { icon: FileCode, color: '#8c8c8c' },
-  log: { icon: FileText, color: '#8c8c8c' },
-  txt: { icon: FileText, color: '#8c8c8c' },
-  c: { icon: FileCode, color: '#283593' },
-  h: { icon: FileCode, color: '#283593' },
-  cpp: { icon: FileCode, color: '#00549d' },
-  cc: { icon: FileCode, color: '#00549d' },
-  kt: { icon: FileCode, color: '#7f52ff' },
-  swift: { icon: FileCode, color: '#f05138' },
-  dart: { icon: FileCode, color: '#0175c2' },
-  png: { icon: FileImage, color: '#8c8c8c' },
-  jpg: { icon: FileImage, color: '#8c8c8c' },
-  jpeg: { icon: FileImage, color: '#8c8c8c' },
-  gif: { icon: FileImage, color: '#8c8c8c' },
-  webp: { icon: FileImage, color: '#8c8c8c' },
-  ico: { icon: FileImage, color: '#8c8c8c' },
-  zip: { icon: FileArchive, color: '#8c8c8c' },
-  tar: { icon: FileArchive, color: '#8c8c8c' },
-  gz: { icon: FileArchive, color: '#8c8c8c' },
-  bz2: { icon: FileArchive, color: '#8c8c8c' },
-  xz: { icon: FileArchive, color: '#8c8c8c' },
-};
-
-function getFileIcon(ext: string): { icon: typeof FileCode; color: string } {
-  return FILE_ICON_MAP[ext] || { icon: File, color: '#8a8aaa' };
-}
-
-function TreeIcon({ node, onToggle }: { node: TreeNode; onToggle: (path: string) => void }) {
-  if (!node.is_dir) {
-    const ext = node.name.split('.').pop()?.toLowerCase() || '';
-    const { icon: Icon, color } = getFileIcon(ext);
-    return (
-      <span style={{ width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <Icon size={14} style={{ color }} />
-      </span>
-    );
-  }
-  return (
-    <span
-      onClick={(e) => { e.stopPropagation(); onToggle(node.path); }}
-      style={{ width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer' }}
-    >
-      {node.expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-    </span>
-  );
-}
-
 export default function CodeEditor({ winId, winData }: Props) {
-  const { closeWindow } = useDesktopStore();
+  const { closeWindow, openWindow, maximizeWindow } = useDesktopStore();
   const user = useAuthStore(s => s.user);
   const homeDir = user?.home || (user?.username === 'root' ? '/root' : '/home/' + (user?.username || 'root')) || '/root';
   const desktopDir = homeDir + '/Desktop';
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rootPath, setRootPath] = useState(desktopDir);
-  const [tree, setTree] = useState<TreeNode[]>([]);
-  const [treeLoading, setTreeLoading] = useState(false);
+  const [rootPath, setRootPath] = useState('');
   const [showMenu, setShowMenu] = useState<string | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -209,6 +146,25 @@ export default function CodeEditor({ winId, winData }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const editorRef = useRef<any>(null);
+  const openFileRef = useRef<(filePath: string) => Promise<void>>(async () => {});
+  const loadTreeRef = useRef<(dir: string) => Promise<void>>(async () => {});
+  const pendingNewFileRef = useRef(false);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveDirPath, setSaveDirPath] = useState('');
+  const [newFileName, setNewFileName] = useState('');
+  const [untitledCounter, setUntitledCounter] = useState(1);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [showEmptyNewFile, setShowEmptyNewFile] = useState(false);
+  const [sidebarCtx, setSidebarCtx] = useState<{ x: number; y: number; item: { name: string; path: string; is_dir: boolean } } | null>(null);
+  const [renameSidebar, setRenameSidebar] = useState<string | null>(null);
+  const [renameSidebarVal, setRenameSidebarVal] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<{ name: string; path: string } | null>(null);
+  const renameSidebarRef = useRef<HTMLInputElement>(null);
+  const dragTabRef = useRef<number | null>(null);
+  const activePathRef = useRef(activePath);
+  useEffect(() => { activePathRef.current = activePath; }, [activePath]);
+  const tabsRef = useRef(tabs);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
   const dark = isDark();
 
@@ -237,13 +193,64 @@ export default function CodeEditor({ winId, winData }: Props) {
     fileIconColor: dark ? '#569cd6' : '#2563eb',
   };
 
+  const storageKey = 'ce-state' + (winId ? '-' + winId : '');
+
+  // Track whether restore completed (even if no data found) and whether tabs were actually restored
+  const restored = useRef(false);
+  const tabsRestored = useRef(false);
+  // Restore state from localStorage on mount (runs once)
+  // IMPORTANT: This must be declared BEFORE the persist effect so it runs first
   useEffect(() => {
+    if (restored.current) return;
+    restored.current = true;
+    let savedRootPath: string | null = null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        savedRootPath = saved.rootPath || null;
+        if (saved.rootPath) setRootPath(saved.rootPath);
+        if (saved.untitledCounter) setUntitledCounter(saved.untitledCounter);
+        if (Array.isArray(saved.tabs) && saved.tabs.length > 0) {
+          setTabs(saved.tabs);
+          tabsRestored.current = true;
+          setActivePath(
+            saved.activePath && saved.tabs.some((t: any) => t.path === saved.activePath)
+              ? saved.activePath
+              : saved.tabs[saved.tabs.length - 1].path
+          );
+        }
+      }
+    } catch {}
+    // Load tree after potential restore if we have a saved path
+    if (savedRootPath) {
+      loadTree(savedRootPath);
+    }
+  }, []);
+
+  // Persist state to localStorage (only after restore has run)
+  useEffect(() => {
+    if (!restored.current) return; // Don't save until after restore
+    try {
+      localStorage.setItem(storageKey, JSON.stringify({ tabs, activePath, rootPath, untitledCounter }));
+    } catch {}
+  }, [tabs, activePath, rootPath, untitledCounter]);
+
+  useEffect(() => {
+    // Cleanup global callback on unmount
+    return () => { delete (window as any).__cePickDir; };
+  }, []);
+
+  useEffect(() => {
+    if (winId) maximizeWindow(winId);
     const p = winData?.path as string | undefined;
     if (p) {
-      setRootPath(p.startsWith('/') ? (p.split('/').slice(0, -1).join('/') || '/') : desktopDir);
+      // If tabs were actually restored from localStorage, don't re-open (would cause duplicate)
+      if (tabsRestored.current) return;
+      const dir = p.startsWith('/') ? (p.split('/').slice(0, -1).join('/') || '/') : desktopDir;
+      setRootPath(dir);
+      loadTree(dir);
       openFile(p);
-    } else {
-      loadTree(desktopDir);
     }
   }, []);
 
@@ -255,54 +262,29 @@ export default function CodeEditor({ winId, winData }: Props) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showMenu]);
 
-  const activeTab = tabs.find(t => t.path === activePath) || null;
+  const [tree, setTree] = useState<{ name: string; path: string; is_dir: boolean }[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
 
   const loadTree = async (dir: string) => {
     setTreeLoading(true);
     try {
       const data = await api.get<{ path: string; items: FileItem[] }>(`/files?path=${encodeURIComponent(dir)}`);
-      const nodes: TreeNode[] = data.items.map((item: FileItem) => ({
+      setTree(data.items.map(item => ({
         name: item.name,
         path: (data.path.endsWith('/') ? data.path : data.path + '/') + item.name,
         is_dir: item.is_dir,
-        expanded: false,
-        children: [],
-      }));
-      setTree(nodes);
+      })));
     } catch { setTree([]); }
     setTreeLoading(false);
   };
 
-  const expandDir = async (dirPath: string) => {
-    const upd = (nodes: TreeNode[]): TreeNode[] => nodes.map(n => {
-      if (n.path === dirPath && n.is_dir) return { ...n, expanded: !n.expanded, loading: true };
-      if (n.expanded && n.children.length > 0) return { ...n, children: upd(n.children) };
-      return n;
-    });
-    setTree(prev => upd(prev));
-    try {
-      const data = await api.get<{ path: string; items: FileItem[] }>(`/files?path=${encodeURIComponent(dirPath)}`);
-      const children: TreeNode[] = data.items.map((item: FileItem) => ({
-        name: item.name,
-        path: (data.path.endsWith('/') ? data.path : data.path + '/') + item.name,
-        is_dir: item.is_dir,
-        expanded: false,
-        children: [],
-      }));
-      const upd2 = (nodes: TreeNode[]): TreeNode[] => nodes.map(n => {
-        if (n.path === dirPath && n.is_dir) return { ...n, expanded: !n.expanded, children, loading: false };
-        if (n.expanded && n.children.length > 0) return { ...n, children: upd2(n.children) };
-        return n;
-      });
-      setTree(prev => upd2(prev));
-    } catch {
-      const upd3 = (nodes: TreeNode[]): TreeNode[] => nodes.map(n => {
-        if (n.path === dirPath) return { ...n, loading: false };
-        return n;
-      });
-      setTree(prev => upd3(prev));
-    }
+  const navigateDir = async (dirPath: string) => {
+    setShowEmptyNewFile(false);
+    setRootPath(dirPath);
+    await loadTree(dirPath);
   };
+
+  const activeTab = tabs.find(t => t.path === activePath) || null;
 
   const openFile = async (filePath: string) => {
     if (tabs.find(t => t.path === filePath)) { setActivePath(filePath); return; }
@@ -330,6 +312,31 @@ export default function CodeEditor({ winId, winData }: Props) {
   const handleSave = async () => {
     if (!activeTab) return;
     const content = editorRef.current?.getValue() ?? activeTab.content;
+    
+    // Untitled tab — trigger save-as flow
+    if (!activeTab.path.includes('/')) {
+      if (rootPath) {
+        // Folder already opened — save directly to that folder
+        setSaveDirPath(rootPath);
+        setNewFileName(activeTab.name);
+        setShowSaveDialog(true);
+      } else {
+        // No folder — open File Manager to pick directory & show save dialog
+        const name = activeTab.name;
+        (window as any).__cePickDir = (dirPath: string) => {
+          setRootPath(dirPath);
+          loadTree(dirPath);
+          setSaveDirPath(dirPath);
+          setNewFileName(name);
+          setShowSaveDialog(true);
+        };
+        const id = 'fm-pickdir-' + Date.now();
+        openWindow(id, 'Save File', { path: desktopDir, pickDir: true });
+      }
+      return;
+    }
+    
+    // Normal save
     try {
       await api.post('/files/write', { path: activeTab.path, content });
       setTabs(prev => prev.map(t =>
@@ -345,6 +352,36 @@ export default function CodeEditor({ winId, winData }: Props) {
     ));
   };
 
+  const addUntitledTab = () => {
+    const name = 'untitled-' + untitledCounter;
+    const tab: OpenTab = {
+      path: name, name, language: 'plaintext',
+      content: '', original: '', saved: false,
+    };
+    setTabs(prev => [...prev, tab]);
+    setActivePath(name);
+    setUntitledCounter(prev => prev + 1);
+  };
+
+  const doSaveAs = async () => {
+    if (!newFileName.trim() || !saveDirPath) return;
+    const fullPath = saveDirPath.replace(/\/$/, '') + '/' + newFileName.trim();
+    setShowSaveDialog(false);
+    setNewFileName('');
+    try {
+      const content = editorRef.current?.getValue() ?? '';
+      await api.post('/files/write', { path: fullPath, content });
+      const name = newFileName.trim();
+      setTabs(prev => prev.map(t =>
+        t.path === activePath ? { ...t, path: fullPath, name, language: getLang(name), content, original: content, saved: true } : t
+      ));
+      setActivePath(fullPath);
+      // Update sidebar to show the folder where file was saved
+      setRootPath(saveDirPath);
+      loadTree(saveDirPath);
+    } catch {}
+  };
+
   const handleEditorMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
     editor.onDidChangeCursorPosition((e: any) => {
@@ -357,8 +394,187 @@ export default function CodeEditor({ winId, winData }: Props) {
     });
   };
 
-  const openFileDialog = () => { const p = prompt('Enter file path:'); if (p) openFile(p); };
-  const openFolderDialog = () => { const p = prompt('Enter folder path:'); if (p) { setRootPath(p); loadTree(p); } };
+  const openFileDialog = () => {
+    const id = 'fm-pick-' + Date.now();
+    openWindow(id, 'Select File', { path: rootPath, pickMode: true });
+  };
+  const openFolderDialog = () => {
+    pendingNewFileRef.current = false;
+    const id = 'fm-pickdir-' + Date.now();
+    // Set global callback so FileManager can call us directly
+    (window as any).__cePickDir = (dirPath: string) => {
+      console.log('[Debug] __cePickDir callback fired:', dirPath);
+      setShowEmptyNewFile(false);
+      setRootPath(dirPath);
+      loadTree(dirPath);
+    };
+    openWindow(id, 'Select Folder', { path: rootPath, pickDir: true });
+  };
+
+  // Keep refs in sync with current function closures
+  openFileRef.current = openFile;
+  loadTreeRef.current = loadTree;
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const filePath = (e as CustomEvent).detail?.path;
+      if (filePath) openFileRef.current(filePath);
+    };
+    document.addEventListener('fm-file-picked', handler);
+    return () => document.removeEventListener('fm-file-picked', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const dirPath = (e as CustomEvent).detail?.path;
+      if (!dirPath) return;
+      if (pendingNewFileRef.current) {
+        pendingNewFileRef.current = false;
+        setSaveDirPath(dirPath);
+        setNewFileName((window as any).__pendingFileName || '');
+        (window as any).__pendingFileName = '';
+        setShowSaveDialog(true);
+      } else {
+        setRootPath(dirPath);
+        loadTreeRef.current(dirPath);
+      }
+    };
+    document.addEventListener('fm-dir-picked', handler);
+    return () => document.removeEventListener('fm-dir-picked', handler);
+  }, []);
+
+  // === Keyboard shortcuts ===
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (!isCtrl) return;
+      switch (e.key.toLowerCase()) {
+        case 'n':
+          e.preventDefault();
+          addUntitledTab();
+          break;
+        case 'w':
+          e.preventDefault();
+          const closePath = activePathRef.current;
+          if (closePath) {
+            const remaining = tabsRef.current.filter(t => t.path !== closePath);
+            setTabs(remaining);
+            setActivePath(remaining.length > 0 ? remaining[remaining.length - 1].path : null);
+          }
+          break;
+        case 'o':
+          e.preventDefault();
+          openFileDialog();
+          break;
+        case '`':
+          e.preventDefault();
+          setShowTerminal(prev => !prev);
+          break;
+        case 'e':
+          if (e.shiftKey) {
+            e.preventDefault();
+            setSidebarOpen(prev => !prev);
+          }
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // === Sidebar context menu handlers ===
+  const handleSidebarContext = (e: React.MouseEvent, item: { name: string; path: string; is_dir: boolean }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSidebarCtx({ x: e.clientX, y: e.clientY, item });
+  };
+  const closeSidebarCtx = () => setSidebarCtx(null);
+
+  useEffect(() => {
+    const handler = () => closeSidebarCtx();
+    if (sidebarCtx) {
+      window.addEventListener('click', handler);
+      return () => window.removeEventListener('click', handler);
+    }
+  }, [sidebarCtx]);
+
+  const handleSidebarRename = (item: { name: string; path: string; is_dir: boolean }) => {
+    const dot = item.name.lastIndexOf('.');
+    const val = dot > 0 ? item.name.slice(0, dot) : item.name;
+    setRenameSidebar(item.name);
+    setRenameSidebarVal(val);
+    setSidebarCtx(null);
+    setTimeout(() => renameSidebarRef.current?.setSelectionRange(0, val.length), 50);
+  };
+
+  const doSidebarRename = async () => {
+    if (!renameSidebar || !renameSidebarVal) { setRenameSidebar(null); return; }
+    const dot = renameSidebar.lastIndexOf('.');
+    const ext = dot > 0 ? renameSidebar.slice(dot) : '';
+    const finalName = renameSidebarVal + ext;
+    if (finalName === renameSidebar) { setRenameSidebar(null); return; }
+    const src = rootPath.replace(/\/$/, '') + '/' + renameSidebar;
+    try {
+      await api.post('/files/rename', { path: src, new_name: finalName });
+      setRenameSidebar(null);
+      await loadTree(rootPath);
+      // Update tabs if the renamed file is open
+      setTabs(prev => prev.map(t => t.path === src ? { ...t, path: rootPath.replace(/\/$/, '') + '/' + finalName, name: finalName } : t));
+      if (activePath === src) setActivePath(rootPath.replace(/\/$/, '') + '/' + finalName);
+    } catch {}
+  };
+
+  const handleSidebarDelete = async (item: { name: string; path: string; is_dir: boolean }) => {
+    setSidebarCtx(null);
+    setDeleteConfirm({ name: item.name, path: item.path });
+  };
+
+  const doSidebarDelete = async () => {
+    if (!deleteConfirm) return;
+    try {
+      await api.post('/files/remove', { path: deleteConfirm.path });
+      setDeleteConfirm(null);
+      // Close tab if the deleted file was open
+      closeTab(deleteConfirm.path);
+      await loadTree(rootPath);
+    } catch {}
+    setDeleteConfirm(null);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setSidebarCtx(null);
+  };
+
+  const handleCreateInTree = async () => {
+    if (!newFileName.trim() || !rootPath) return;
+    const fullPath = rootPath.replace(/\/$/, '') + '/' + newFileName.trim();
+    setShowEmptyNewFile(false);
+    setNewFileName('');
+    try {
+      await api.post('/files/write', { path: fullPath, content: '' });
+      await loadTree(rootPath);
+      openFile(fullPath);
+    } catch {}
+  };
+
+  const handleCreateNoFolder = async () => {
+    if (!newFileName.trim()) return;
+    setShowEmptyNewFile(false);
+    const name = newFileName.trim();
+    setNewFileName('');
+    // Set global callback: open folder + show save dialog directly
+    (window as any).__cePickDir = (dirPath: string) => {
+      setShowEmptyNewFile(false);
+      setRootPath(dirPath);
+      loadTree(dirPath);
+      setSaveDirPath(dirPath);
+      setNewFileName(name);
+      setShowSaveDialog(true);
+    };
+    const id = 'fm-pickdir-' + Date.now();
+    openWindow(id, 'Save File', { path: desktopDir, pickDir: true });
+  };
 
   const openLocalFile = () => fileInputRef.current?.click();
   const handleLocalFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -388,27 +604,6 @@ export default function CodeEditor({ winId, winData }: Props) {
     e.target.value = '';
   };
 
-  const renderTree = (nodes: TreeNode[], depth = 0) => nodes.map(node => (
-    <div key={node.path}>
-      <div
-        style={{
-          display: 'flex', alignItems: 'center', gap: 2, padding: '2px 8px', paddingLeft: 8 + depth * 16,
-          cursor: 'pointer', borderRadius: 0, userSelect: 'none',
-          background: activePath === node.path ? c.sidebarActive : undefined,
-          color: node.is_dir ? c.treeText : c.treeTextFile,
-        }}
-        onClick={() => { if (node.is_dir) expandDir(node.path); else openFile(node.path); }}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        <TreeIcon node={node} onToggle={expandDir} />
-        <span style={{ marginLeft: 4, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {node.name}
-        </span>
-      </div>
-      {node.expanded && node.children.length > 0 && renderTree(node.children, depth + 1)}
-    </div>
-  ));
-
   const menuItems: Record<string, { label: string; action: () => void; divider?: boolean }[]> = {
     File: [
       { label: 'Open File...', action: openFileDialog },
@@ -416,6 +611,9 @@ export default function CodeEditor({ winId, winData }: Props) {
       { label: 'Open Local File...', action: openLocalFile },
       { label: 'Open Local Folder...', action: openLocalFolder, divider: true },
       { label: 'Exit', action: () => winId && closeWindow(winId) },
+    ],
+    Terminal: [
+      { label: showTerminal ? 'Hide Terminal' : 'Show Terminal', action: () => setShowTerminal(prev => !prev) },
     ],
     Help: [
       { label: 'About', action: () => setShowAbout(true) },
@@ -429,7 +627,7 @@ export default function CodeEditor({ winId, winData }: Props) {
       {/* Menu Bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: c.bgMenu, borderBottom: `1px solid ${c.border}`, padding: '0 4px', height: 32, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
-          {['File', 'Help'].map(menu => (
+          {['File', 'Terminal', 'Help'].map(menu => (
             <div key={menu} style={{ position: 'relative' }}>
               <button
                 style={{ background: 'none', border: 'none', color: c.text, cursor: 'pointer', padding: '4px 10px', fontSize: 13, borderRadius: 4 }}
@@ -465,25 +663,175 @@ export default function CodeEditor({ winId, winData }: Props) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Sidebar */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        {/* Sidebar: Explorer only */}
         {sidebarOpen && (
-          <div style={{ width: 240, minWidth: 240, display: 'flex', flexDirection: 'column', background: c.bgAlt, borderRight: `1px solid ${c.border}`, overflow: 'hidden' }}>
+          <div style={{ width: 220, minWidth: 220, display: 'flex', flexDirection: 'column', background: c.bgAlt, borderRight: `1px solid ${c.border}`, overflow: 'hidden' }}>
             <div style={{ padding: '8px 12px', borderBottom: `1px solid ${c.border}` }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>Explorer</span>
             </div>
-            <div style={{ padding: '4px 0' }}>
-              <button style={{ display: 'flex', alignItems: 'center', width: '100%', padding: '3px 12px', background: 'none', border: 'none', color: c.textMuted, cursor: 'pointer', fontSize: 12 }}
-                onClick={() => loadTree(rootPath)}>
-                <Folder size={13} /> <span style={{ marginLeft: 4, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>{rootPath}</span>
-              </button>
-            </div>
             <div style={{ flex: 1, overflow: 'auto' }}>
-              {treeLoading
-                ? <div style={{ padding: 12, color: c.textDim, fontSize: 12 }}>Loading...</div>
-                : tree.length === 0
-                  ? <div style={{ padding: 12, color: c.textDim, fontSize: 12 }}>Open a folder to explore</div>
-                  : renderTree(tree)}
+              {rootPath ? (
+                <div style={{ padding: '0 8px 6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', fontSize: 11, color: c.textDim, overflow: 'hidden' }}>
+                    <Folder size={12} style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rootPath}</span>
+                  </div>
+                  {treeLoading ? (
+                    <div style={{ padding: '6px', fontSize: 11, color: c.textDim }}>Loading...</div>
+                  ) : tree.length === 0 ? (
+                    <div style={{ padding: '6px' }}>
+                      <div style={{ fontSize: 11, color: c.textDim, marginBottom: 6 }}>Empty folder</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {showEmptyNewFile ? (
+                          <>
+                            <input autoFocus value={newFileName}
+                              onChange={e => setNewFileName(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') handleCreateInTree();
+                                if (e.key === 'Escape') setShowEmptyNewFile(false);
+                              }}
+                              placeholder="filename.ext"
+                              style={{
+                                flex: 1, padding: '4px 6px', fontSize: 11,
+                                border: `1px solid ${c.border}`, borderRadius: 4,
+                                background: c.bg, color: c.text, outline: 'none',
+                              }}
+                            />
+                            <button onClick={handleCreateInTree}
+                              style={{
+                                padding: '3px 8px', border: 'none', borderRadius: 4,
+                                background: c.btnBg, color: c.btnText, fontSize: 11,
+                                cursor: 'pointer', fontWeight: 600,
+                              }}>Create</button>
+                            <button onClick={() => setShowEmptyNewFile(false)}
+                              style={{
+                                padding: '3px 6px', border: `1px solid ${c.border}`, borderRadius: 4,
+                                background: 'none', color: c.textMuted, fontSize: 11,
+                                cursor: 'pointer',
+                              }}><X size={11} /></button>
+                          </>
+                        ) : (
+                          <button onClick={() => { setNewFileName(''); setShowEmptyNewFile(true); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 4,
+                              padding: '3px 8px', border: 'none', borderRadius: 4,
+                              background: 'none', color: c.fileIconColor, fontSize: 11,
+                              cursor: 'pointer', fontWeight: 500,
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                          >
+                            <Plus size={12} />
+                            <span>New File</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    tree.map(item => (
+                      <div key={item.path}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 16px',
+                          cursor: 'pointer', borderRadius: 3, fontSize: 12,
+                          color: c.textMuted,
+                          position: 'relative',
+                        }}
+                        onClick={() => {
+                          if (renameSidebar) { setRenameSidebar(null); return; }
+                          item.is_dir ? navigateDir(item.path) : openFile(item.path);
+                        }}
+                        onContextMenu={e => handleSidebarContext(e, item)}
+                        onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        {item.is_dir ? (
+                          <Folder size={13} style={{ color: c.iconColor, flexShrink: 0 }} />
+                        ) : (
+                          <FileText size={13} style={{ color: getFileIconColor(item.name), flexShrink: 0 }} />
+                        )}
+                        {renameSidebar === item.name ? (
+                          <input ref={renameSidebarRef} autoFocus value={renameSidebarVal}
+                            onChange={e => setRenameSidebarVal(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') doSidebarRename(); if (e.key === 'Escape') setRenameSidebar(null); }}
+                            onBlur={() => doSidebarRename()}
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                              flex: 1, padding: '1px 4px', fontSize: 12,
+                              border: `1px solid ${c.border}`, borderRadius: 3,
+                              background: c.bg, color: c.text, outline: 'none',
+                            }}
+                          />
+                        ) : (
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              ) : (
+                <div style={{ padding: '12px' }}>
+                  <div style={{ fontSize: 11, color: c.textDim, marginBottom: 10, lineHeight: 1.5 }}>
+                    No folder opened
+                  </div>
+                  <button onClick={openFolderDialog}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                      padding: '5px 8px', border: 'none', borderRadius: 4,
+                      background: 'none', color: c.fileIconColor, fontSize: 12,
+                      cursor: 'pointer', fontWeight: 500,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >
+                    <FolderOpen size={14} />
+                    <span>Open Folder</span>
+                  </button>
+                  <button onClick={() => { setNewFileName(''); setShowEmptyNewFile(true); }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                      padding: '5px 8px', border: 'none', borderRadius: 4,
+                      background: 'none', color: c.fileIconColor, fontSize: 12,
+                      cursor: 'pointer', fontWeight: 500, marginTop: 2,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                    onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                  >
+                    <FileText size={14} />
+                    <span>Create File</span>
+                  </button>
+                  {showEmptyNewFile && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                      <input autoFocus value={newFileName}
+                        onChange={e => setNewFileName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleCreateNoFolder();
+                          if (e.key === 'Escape') setShowEmptyNewFile(false);
+                        }}
+                        placeholder="filename.ext"
+                        style={{
+                          flex: 1, padding: '4px 6px', fontSize: 11,
+                          border: `1px solid ${c.border}`, borderRadius: 4,
+                          background: c.bg, color: c.text, outline: 'none',
+                        }}
+                      />
+                      <button onClick={handleCreateNoFolder}
+                        style={{
+                          padding: '3px 8px', border: 'none', borderRadius: 4,
+                          background: c.btnBg, color: c.btnText, fontSize: 11,
+                          cursor: 'pointer', fontWeight: 600,
+                        }}>Create</button>
+                      <button onClick={() => setShowEmptyNewFile(false)}
+                        style={{
+                          padding: '3px 6px', border: `1px solid ${c.border}`, borderRadius: 4,
+                          background: 'none', color: c.textMuted, fontSize: 11,
+                          cursor: 'pointer',
+                        }}><X size={11} /></button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -492,10 +840,23 @@ export default function CodeEditor({ winId, winData }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
           {/* Tabs */}
           {tabs.length > 0 && (
-            <div style={{ display: 'flex', background: c.bgMenu, borderBottom: `1px solid ${c.border}`, minHeight: 35, flexShrink: 0, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', overflow: 'auto', flex: 1 }}>
-                {tabs.map(tab => (
+            <div style={{ display: 'flex', alignItems: 'center', background: c.bgMenu, borderBottom: `1px solid ${c.border}`, minHeight: 35, flexShrink: 0, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', overflow: 'auto', flex: 1, alignItems: 'center' }}>
+                {tabs.map((tab, idx) => (
                   <div key={tab.path}
+                    draggable
+                    onDragStart={() => { dragTabRef.current = idx; }}
+                    onDragOver={(e) => { e.preventDefault(); }}
+                    onDrop={() => {
+                      if (dragTabRef.current === null || dragTabRef.current === idx) return;
+                      setTabs(prev => {
+                        const arr = [...prev];
+                        const [moved] = arr.splice(dragTabRef.current!, 1);
+                        arr.splice(idx, 0, moved);
+                        return arr;
+                      });
+                      dragTabRef.current = null;
+                    }}
                     style={{
                       display: 'flex', alignItems: 'center', padding: '6px 12px',
                       borderRight: `1px solid ${c.border}`, borderBottom: '1px solid transparent',
@@ -512,6 +873,21 @@ export default function CodeEditor({ winId, winData }: Props) {
                       onClick={(e) => closeTab(tab.path, e)} />
                   </div>
                 ))}
+                {/* | + new */}
+                <span style={{ color: c.textDim, fontSize: 14, marginLeft: 4 }}>|</span>
+                <button onClick={addUntitledTab}
+                  style={{
+                    background: 'none', border: 'none', color: c.textMuted, cursor: 'pointer',
+                    padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 3,
+                    fontSize: 13, fontWeight: 500,
+                  }}
+                  title="Create New File"
+                  onMouseEnter={e => e.currentTarget.style.color = c.text}
+                  onMouseLeave={e => e.currentTarget.style.color = c.textMuted}
+                >
+                  <Plus size={14} />
+                  <span>new</span>
+                </button>
               </div>
             </div>
           )}
@@ -531,10 +907,82 @@ export default function CodeEditor({ winId, winData }: Props) {
                 }}
               />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: c.textDim, gap: 16 }}>
-                <FileText size={48} style={{ opacity: 0.3 }} />
-                <div style={{ fontSize: 14, color: c.textMuted }}>No file open</div>
-                <div style={{ fontSize: 12, color: c.textDim }}>Use File &gt; Open File or browse files in the sidebar</div>
+              <div style={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center', color: c.textDim }}>
+                <div style={{ display: 'flex', gap: 48, alignItems: 'flex-start' }}>
+                  {/* Left: Start section */}
+                  <div>
+                    <div style={{ fontSize: 24, fontWeight: 200, color: c.text, marginBottom: 24, opacity: 0.8 }}>CloudBanana Code Editor</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 }}>Start</div>
+                    <button onClick={addUntitledTab}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                        padding: '6px 12px', background: 'none', border: 'none',
+                        borderRadius: 4, color: c.text, fontSize: 13, cursor: 'pointer',
+                        textAlign: 'left', transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <FileText size={16} style={{ color: c.fileIconColor, flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13 }}>New File...</div>
+                        <div style={{ fontSize: 11, color: c.textDim }}>Create a new file</div>
+                      </div>
+                    </button>
+                    <button onClick={openFileDialog}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                        padding: '6px 12px', background: 'none', border: 'none',
+                        borderRadius: 4, color: c.text, fontSize: 13, cursor: 'pointer',
+                        textAlign: 'left', transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <FolderOpen size={16} style={{ color: c.fileIconColor, flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13 }}>Open File...</div>
+                        <div style={{ fontSize: 11, color: c.textDim }}>Browse and open a file</div>
+                      </div>
+                    </button>
+                    <button onClick={openFolderDialog}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                        padding: '6px 12px', background: 'none', border: 'none',
+                        borderRadius: 4, color: c.text, fontSize: 13, cursor: 'pointer',
+                        textAlign: 'left', transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <Folder size={16} style={{ color: c.fileIconColor, flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13 }}>Open Folder...</div>
+                        <div style={{ fontSize: 11, color: c.textDim }}>Browse and open a folder</div>
+                      </div>
+                    </button>
+                  </div>
+                  {/* Right: Help section */}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 }}>Help</div>
+                    <button onClick={() => setShowAbout(true)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                        padding: '6px 12px', background: 'none', border: 'none',
+                        borderRadius: 4, color: c.text, fontSize: 13, cursor: 'pointer',
+                        textAlign: 'left', transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <Info size={16} style={{ color: c.fileIconColor, flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: 13 }}>About</div>
+                        <div style={{ fontSize: 11, color: c.textDim }}>Version info</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -560,9 +1008,130 @@ export default function CodeEditor({ winId, winData }: Props) {
           </div>
         </div>
       </div>
+        {/* Terminal panel */}
+        {showTerminal && (
+          <div style={{ height: 200, borderTop: `1px solid ${c.border}`, display: 'flex', flexDirection: 'column', background: c.bgAlt }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 8px', background: c.bgMenu, borderBottom: `1px solid ${c.border}`, flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <TerminalIcon size={13} style={{ color: c.textMuted }} />
+                <span style={{ fontSize: 11, color: c.textMuted }}>Terminal</span>
+              </div>
+              <button onClick={() => setShowTerminal(false)}
+                style={{ background: 'none', border: 'none', color: c.textDim, cursor: 'pointer', padding: 2, display: 'flex' }}
+                title="Close Terminal">
+                <X size={13} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <TerminalPanel winId={undefined} />
+            </div>
+          </div>
+        )}
+      </div>
 
       <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={handleLocalFile} />
       <input ref={folderInputRef} type="file" style={{ display: 'none' }} onChange={handleLocalFolder} {...{ webkitdirectory: '' as any }} />
+
+
+
+      {/* Save As dialog: triggered when saving an untitled file */}
+      {showSaveDialog && (
+        <div style={{ position: 'fixed', inset: 0, background: c.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => { setShowSaveDialog(false); pendingNewFileRef.current = false; }}>
+          <div style={{ background: c.dialogBg, border: `1px solid ${c.border}`, borderRadius: 12, padding: 20, maxWidth: 400, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: c.text, marginBottom: 12 }}>Save File</div>
+            <div style={{ fontSize: 12, color: c.textMuted, marginBottom: 4 }}>Location:</div>
+            <div style={{ fontSize: 12, color: c.textDim, marginBottom: 12, wordBreak: 'break-all', padding: '4px 8px', background: c.bgAlt, borderRadius: 4 }}>{saveDirPath}</div>
+            <input autoFocus value={newFileName}
+              onChange={e => setNewFileName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') doSaveAs(); if (e.key === 'Escape') setShowSaveDialog(false); }}
+              placeholder="filename.ext"
+              style={{
+                width: '100%', padding: '8px 10px', border: `1px solid ${c.border}`,
+                borderRadius: 6, background: c.bg, color: c.text, fontSize: 13,
+                outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+              <button onClick={() => { setShowSaveDialog(false); pendingNewFileRef.current = false; }}
+                style={{ padding: '6px 16px', border: `1px solid ${c.border}`, borderRadius: 6, background: 'none', color: c.textMuted, fontSize: 12, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={doSaveAs}
+                style={{ padding: '6px 16px', border: 'none', borderRadius: 6, background: c.btnBg, color: c.btnText, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sidebar context menu */}
+      {sidebarCtx && (
+        <div style={{ position: 'fixed', left: sidebarCtx.x, top: sidebarCtx.y, background: c.dropdownBg, border: `1px solid ${c.dropdownBorder}`, borderRadius: 6, minWidth: 160, padding: '4px 0', zIndex: 10000, boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
+          {!sidebarCtx.item.is_dir && (
+            <button style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', background: 'none', border: 'none', color: c.text, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => { openFile(sidebarCtx.item.path); closeSidebarCtx(); }}
+              onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <ExternalLink size={13} style={{ color: c.iconColor }} /> Open
+            </button>
+          )}
+          {sidebarCtx.item.is_dir && (
+            <button style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', background: 'none', border: 'none', color: c.text, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => { navigateDir(sidebarCtx.item.path); closeSidebarCtx(); }}
+              onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              <Folder size={13} style={{ color: c.iconColor }} /> Open
+            </button>
+          )}
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', background: 'none', border: 'none', color: c.text, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => { handleSidebarRename(sidebarCtx.item); }}
+            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <Edit3 size={13} style={{ color: c.iconColor }} /> Rename
+          </button>
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', background: 'none', border: 'none', color: c.text, fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => { copyToClipboard(sidebarCtx.item.path); }}
+            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <Copy size={13} style={{ color: c.iconColor }} /> Copy Path
+          </button>
+          <div style={{ height: 1, background: c.border, margin: '4px 8px' }} />
+          <button style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '6px 12px', background: 'none', border: 'none', color: '#f87171', fontSize: 12, cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => { handleSidebarDelete(sidebarCtx.item); }}
+            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            <Trash2 size={13} /> Delete
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirm dialog */}
+      {deleteConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: c.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setDeleteConfirm(null)}>
+          <div style={{ background: c.dialogBg, border: `1px solid ${c.border}`, borderRadius: 12, padding: 24, maxWidth: 360, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: c.text, marginBottom: 8 }}>Delete</div>
+            <p style={{ fontSize: 13, color: c.textMuted, margin: '0 0 16px', lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong style={{ color: c.text }}>{deleteConfirm.name}</strong>?
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setDeleteConfirm(null)}
+                style={{ padding: '6px 16px', border: `1px solid ${c.border}`, borderRadius: 6, background: 'none', color: c.textMuted, fontSize: 12, cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={doSidebarDelete}
+                style={{ padding: '6px 16px', border: 'none', borderRadius: 6, background: '#dc2626', color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAbout && (
         <div style={{ position: 'fixed', inset: 0, background: c.overlay, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setShowAbout(false)}>
