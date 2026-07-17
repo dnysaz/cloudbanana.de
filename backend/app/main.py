@@ -131,31 +131,36 @@ def on_startup():
     init_db()
     settings_cache.load()
     # Cleanup expired blacklisted tokens and old audit logs
-    with Session(engine) as session:
-        expired = session.exec(
-            select(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.utcnow())
-        ).all()
-        for t in expired:
-            session.delete(t)
-        cutoff = datetime.utcnow() - timedelta(days=30)
-        old_logs = session.exec(
-            select(AuditLog).where(AuditLog.created_at < cutoff)
-        ).all()
-        for log in old_logs:
-            session.delete(log)
-        session.commit()
-        if expired:
-            logger.info(f"Cleaned up {len(expired)} expired blacklisted tokens")
-        if old_logs:
-            logger.info(f"Cleaned up {len(old_logs)} old audit logs")
+    try:
+        with Session(engine) as session:
+            expired = session.exec(
+                select(TokenBlacklist).where(TokenBlacklist.expires_at < datetime.utcnow())
+            ).all()
+            for t in expired:
+                session.delete(t)
+            cutoff = datetime.utcnow() - timedelta(days=30)
+            old_logs = session.exec(
+                select(AuditLog).where(AuditLog.created_at < cutoff)
+            ).all()
+            for log in old_logs:
+                session.delete(log)
+            session.commit()
+            if expired:
+                logger.info(f"Cleaned up {len(expired)} expired blacklisted tokens")
+            if old_logs:
+                logger.info(f"Cleaned up {len(old_logs)} old audit logs")
+    except Exception as e:
+        logger.warning(f"Startup DB cleanup failed: {e}")
     # Cleanup stale in-memory tasks
     now = time.time()
+    total_stale = 0
     for tasks_dict in (_install_tasks, _wget_tasks):
         stale = [tid for tid, t in tasks_dict.items()
                  if t.get("status") in ("done", "error") and now - t.get("_ts", now) > 3600]
         for tid in stale:
             del tasks_dict[tid]
-    logger.info(f"Cleaned up {len(stale)} stale in-memory tasks")
+        total_stale += len(stale)
+    logger.info(f"Cleaned up {total_stale} stale in-memory tasks")
     # Cleanup temp SQLite copies
     for f in Path("/tmp").glob("sqle_*"):
         try:
@@ -877,21 +882,27 @@ async def list_www(user: User = Depends(get_current_user)):
 @app.post("/api/v1/www")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_www_folder", "10/minute"))
 async def create_www_folder(request: Request, body: CreateFolderBody, user: User = Depends(get_current_user)):
-    folder = Path("/var/www") / body.name
-    if folder.exists():
+    folder = f"/var/www/{body.name}"
+    if _sudo_exists(folder, "-d"):
         raise HTTPException(status_code=400, detail="Folder already exists")
-    folder.mkdir(parents=True, exist_ok=True)
-    return {"status": "success", "message": f"Folder /var/www/{body.name} created"}
+    r = subprocess.run(["sudo", "mkdir", "-p", folder], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"Failed to create folder: {r.stderr}")
+    return {"status": "success", "message": f"Folder {folder} created"}
 
 @app.post("/api/v1/subdomain")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_subdomain", "10/minute"))
 async def create_subdomain(request: Request, body: SubdomainBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
-    target = Path(body.target_dir)
+    target = safe_path(body.target_dir, user)
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="Target directory not found")
+    root_dir = str(target / body.subdomain)
+    subprocess.run(["sudo", "mkdir", "-p", root_dir], capture_output=True, timeout=10)
     config = f"""server {{
     listen 80;
     server_name {body.subdomain}.{body.domain};
 
-    root {target / body.subdomain};
+    root {root_dir};
     index index.html index.htm index.php;
 
     location / {{
@@ -899,19 +910,20 @@ async def create_subdomain(request: Request, body: SubdomainBody, background_tas
     }}
 }}
 """
-    config_path = Path(f"/etc/nginx/sites-available/{body.subdomain}.{body.domain}")
-    config_path.write_text(config)
-    enabled = Path(f"/etc/nginx/sites-enabled/{body.subdomain}.{body.domain}")
-    if not enabled.exists():
-        enabled.symlink_to(config_path)
-    background_tasks.add_task(lambda: run_command(["nginx", "-t"]) and run_command(["systemctl", "reload", "nginx"]))
+    config_name = f"{body.subdomain}.{body.domain}"
+    _sudo_write(f"/etc/nginx/sites-available/{config_name}", config)
+    if not _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
+        subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
+    r = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise HTTPException(status_code=400, detail=f"Nginx config test failed: {r.stderr or r.stdout}")
+    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
     return {"status": "success", "message": f"Subdomain {body.subdomain}.{body.domain} configured"}
 
 @app.post("/api/v1/nginx/test")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_nginx_test", "10/minute"))
 async def test_nginx_config(request: Request, user = Depends(get_current_user)):
-    # Use sudo because nginx -t requires root for reading /run/nginx.pid
-    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
     output = (result.stdout + result.stderr).strip()
     if result.returncode == 0:
         return {"status": "ok", "message": output}
@@ -1856,7 +1868,9 @@ async def request_cert(request: Request, body: CertRequest, user: User = Depends
         logger.exception(f"Unexpected error requesting certificate for {body.domain}")
         return {"status": "error", "message": "Certificate request failed unexpectedly"}
     finally:
-        subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, timeout=15)
+        r = subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            logger.warning(f"Failed to restart nginx after certbot: {r.stderr}")
 
 # ========== PM2 Manager ==========
 
@@ -2400,17 +2414,19 @@ async def laravel_vhost(request: Request, body: LaravelVhostBody, background_tas
 }}
 """
     config_name = server_name if server_name != "_" else f"{proj.name}-port{listen_port}"
-    config_path = Path(f"/etc/nginx/sites-available/{config_name}")
-    config_path.write_text(config)
-    enabled_path = Path(f"/etc/nginx/sites-enabled/{config_name}")
-    if not enabled_path.exists():
-        enabled_path.symlink_to(config_path)
+    _sudo_write(f"/etc/nginx/sites-available/{config_name}", config)
+    if not _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
+        subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
 
-    # Open port in firewall for IP-based access
     if server_name == "_":
-        subprocess.run(["ufw", "allow", str(listen_port), "comment", f"Laravel {proj.name}"], capture_output=True, timeout=10)
+        subprocess.run(["sudo", "ufw", "allow", str(listen_port)], capture_output=True, timeout=10)
 
-    background_tasks.add_task(lambda: (subprocess.run(["nginx", "-t"], capture_output=True, timeout=10), subprocess.run(["systemctl", "reload", "nginx"], capture_output=True, timeout=15)))
+    r = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e") and subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
+        _sudo_exists(f"/etc/nginx/sites-available/{config_name}", "-e") and subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-available/{config_name}"], capture_output=True, timeout=10)
+        raise HTTPException(status_code=400, detail=f"Nginx config test failed: {r.stderr or r.stdout}")
+    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
 
     result = {
         "status": "ok",
@@ -2432,7 +2448,9 @@ def _request_cert_for_domain(domain: str):
         # Use sudo bash -c for certbot (sudoers only allows bash -c for arbitrary commands)
         subprocess.run(["sudo", "bash", "-c", f"certbot certonly --standalone --non-interactive --agree-tos -d {shlex.quote(domain)}"], capture_output=True, timeout=120)
     finally:
-        subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, timeout=15)
+        r = subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            logger.warning(f"Failed to restart nginx after cert request: {r.stderr}")
 
 @app.get("/api/v1/server/ip")
 async def get_server_ip(user: User = Depends(get_current_user)):
@@ -2765,8 +2783,13 @@ def _sudo_symlink(target: Path, link: Path):
     subprocess.run(["sudo", "bash", "-c", f"ln -sf {target} {link}"], capture_output=True, timeout=10)
 
 def _nginx_reload():
-    subprocess.run(["sudo", "bash", "-c", "nginx -t"], capture_output=True, timeout=10)
-    subprocess.run(["sudo", "bash", "-c", "systemctl reload nginx"], capture_output=True, timeout=15)
+    r = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        logger.error(f"nginx config test failed before reload: {r.stderr}")
+        return
+    r = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True, timeout=15)
+    if r.returncode != 0:
+        logger.error(f"nginx reload failed: {r.stderr}")
 
 @app.post("/api/v1/laravel/{name}/toggle")
 async def laravel_toggle(name: str, body: LaravelProjectBody, user: User = Depends(get_current_user)):
@@ -3262,7 +3285,9 @@ async def serve_frontend(full_path: str, request: Request):
     if not frontend_path.exists():
         raise HTTPException(status_code=404)
     if full_path:
-        target = frontend_path / full_path
+        target = (frontend_path / full_path).resolve()
+        if not str(target).startswith(str(frontend_path.resolve())):
+            raise HTTPException(status_code=403, detail="Forbidden")
         if target.is_file():
             return FileResponse(target)
     index = frontend_path / "index.html"
