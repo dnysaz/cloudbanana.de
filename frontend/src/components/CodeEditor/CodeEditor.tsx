@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import Editor, { loader } from '@monaco-editor/react';
 import { api } from '../../api';
 import { useDesktopStore } from '../../store/desktopStore';
+import { useAuthStore } from '../../store/authStore';
 import type { FileItem } from '../../types';
 import {
-  Folder, File, ChevronRight, ChevronDown, Save, X, PanelLeftClose, PanelLeft,
-  Info, FileText,
+  Folder, File, FileCode, FileJson, FileType, FileTerminal, FileText, FileImage,
+  FileArchive, FileSpreadsheet, ChevronRight, ChevronDown, Save, X,
+  PanelLeftClose, PanelLeft, Info,
 } from 'lucide-react';
 
 interface Props {
@@ -110,14 +112,72 @@ interface TreeNode {
   loading?: boolean;
 }
 
+const FILE_ICON_MAP: Record<string, { icon: typeof FileCode; color: string }> = {
+  js: { icon: FileCode, color: '#f7df1e' },
+  jsx: { icon: FileCode, color: '#f7df1e' },
+  mjs: { icon: FileCode, color: '#f7df1e' },
+  ts: { icon: FileCode, color: '#3178c6' },
+  tsx: { icon: FileCode, color: '#3178c6' },
+  py: { icon: FileCode, color: '#3776ab' },
+  rb: { icon: FileCode, color: '#cc342d' },
+  go: { icon: FileCode, color: '#00add8' },
+  rs: { icon: FileCode, color: '#dea584' },
+  java: { icon: FileCode, color: '#b07219' },
+  php: { icon: FileCode, color: '#777bb4' },
+  html: { icon: FileCode, color: '#e44d26' },
+  htm: { icon: FileCode, color: '#e44d26' },
+  css: { icon: FileType, color: '#2965f1' },
+  scss: { icon: FileType, color: '#c6538c' },
+  less: { icon: FileType, color: '#1d365d' },
+  json: { icon: FileJson, color: '#5a5a5a' },
+  xml: { icon: FileCode, color: '#0060ac' },
+  svg: { icon: FileCode, color: '#ffb13b' },
+  sh: { icon: FileTerminal, color: '#4d4d4d' },
+  bash: { icon: FileTerminal, color: '#4d4d4d' },
+  zsh: { icon: FileTerminal, color: '#4d4d4d' },
+  sql: { icon: FileCode, color: '#e38c00' },
+  md: { icon: FileText, color: '#666' },
+  yaml: { icon: FileCode, color: '#6ba5b0' },
+  yml: { icon: FileCode, color: '#6ba5b0' },
+  toml: { icon: FileCode, color: '#8c8c8c' },
+  ini: { icon: FileCode, color: '#8c8c8c' },
+  cfg: { icon: FileCode, color: '#8c8c8c' },
+  conf: { icon: FileCode, color: '#8c8c8c' },
+  csv: { icon: FileSpreadsheet, color: '#217346' },
+  env: { icon: FileCode, color: '#8c8c8c' },
+  log: { icon: FileText, color: '#8c8c8c' },
+  txt: { icon: FileText, color: '#8c8c8c' },
+  c: { icon: FileCode, color: '#283593' },
+  h: { icon: FileCode, color: '#283593' },
+  cpp: { icon: FileCode, color: '#00549d' },
+  cc: { icon: FileCode, color: '#00549d' },
+  kt: { icon: FileCode, color: '#7f52ff' },
+  swift: { icon: FileCode, color: '#f05138' },
+  dart: { icon: FileCode, color: '#0175c2' },
+  png: { icon: FileImage, color: '#8c8c8c' },
+  jpg: { icon: FileImage, color: '#8c8c8c' },
+  jpeg: { icon: FileImage, color: '#8c8c8c' },
+  gif: { icon: FileImage, color: '#8c8c8c' },
+  webp: { icon: FileImage, color: '#8c8c8c' },
+  ico: { icon: FileImage, color: '#8c8c8c' },
+  zip: { icon: FileArchive, color: '#8c8c8c' },
+  tar: { icon: FileArchive, color: '#8c8c8c' },
+  gz: { icon: FileArchive, color: '#8c8c8c' },
+  bz2: { icon: FileArchive, color: '#8c8c8c' },
+  xz: { icon: FileArchive, color: '#8c8c8c' },
+};
+
+function getFileIcon(ext: string): { icon: typeof FileCode; color: string } {
+  return FILE_ICON_MAP[ext] || { icon: File, color: '#8a8aaa' };
+}
+
 function TreeIcon({ node, onToggle }: { node: TreeNode; onToggle: (path: string) => void }) {
   if (!node.is_dir) {
     const ext = node.name.split('.').pop()?.toLowerCase() || '';
-    const isCode = !!LANG_MAP[ext] || ['dockerfile'].includes(node.name.toLowerCase());
-    const c = isCode ? '#569cd6' : '#8a8aaa';
+    const { icon: Icon, color } = getFileIcon(ext);
     return (
       <span style={{ width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        {isCode ? <FileText size={14} style={{ color: c }} /> : <File size={14} style={{ color: c }} />}
+        <Icon size={14} style={{ color }} />
       </span>
     );
   }
@@ -133,10 +193,13 @@ function TreeIcon({ node, onToggle }: { node: TreeNode; onToggle: (path: string)
 
 export default function CodeEditor({ winId, winData }: Props) {
   const { closeWindow } = useDesktopStore();
+  const user = useAuthStore(s => s.user);
+  const homeDir = user?.home || (user?.username === 'root' ? '/root' : '/home/' + (user?.username || 'root')) || '/root';
+  const desktopDir = homeDir + '/Desktop';
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [rootPath, setRootPath] = useState('/root');
+  const [rootPath, setRootPath] = useState(desktopDir);
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [showMenu, setShowMenu] = useState<string | null>(null);
@@ -177,10 +240,10 @@ export default function CodeEditor({ winId, winData }: Props) {
   useEffect(() => {
     const p = winData?.path as string | undefined;
     if (p) {
-      setRootPath(p.startsWith('/') ? (p.split('/').slice(0, -1).join('/') || '/') : '/root');
+      setRootPath(p.startsWith('/') ? (p.split('/').slice(0, -1).join('/') || '/') : desktopDir);
       openFile(p);
     } else {
-      loadTree('/root');
+      loadTree(desktopDir);
     }
   }, []);
 
