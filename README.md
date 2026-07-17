@@ -41,6 +41,7 @@ Instead of remembering dozens of CLI commands, CloudBanana DE gives you a Window
 
 ### 🖥️ Desktop Environment
 - **Window Management** — Drag, resize, minimize, maximize, z-index layaknya OS desktop
+- **Window Persistence** — Window size & position (pos/size) disimpan ke store dan survive page reload
 - **macOS-style Dock** — Drag-drop reorder, pin/unpin apps, running indicators, right-click context menu
 - **Start Menu** — Pinned apps, search, quick access to all applications
 - **Desktop Icons** — Shortcut ke file/folder di ~/Desktop, rename, copy, cut, paste, delete
@@ -75,6 +76,21 @@ Instead of remembering dozens of CLI commands, CloudBanana DE gives you a Window
 - **Hosts Editor** — Edit /etc/hosts dengan confirmation modal
 - **SSL Manager** — View Let's Encrypt certificates, check expiry, request new certificates, install Certbot
 - **Subdomain Manager** — Create subdomains dengan auto-generated Nginx config
+
+### ⌨️ Code Editor
+- **Monaco Editor** — VS Code-quality code editing (syntax highlighting, minimap, multiple cursors)
+- **Multiple Tabs** — Buka banyak file bersamaan dengan tab management
+- **Tab Persistence** — Tabs, active file, dan folder yang terbuka survive page reload
+- **Drag & Drop Tabs** — Reorder tabs dengan drag-and-drop
+- **Keyboard Shortcuts** — `Ctrl+N` (New File), `Ctrl+O` (Open File), `Ctrl+W` (Close Tab), `Ctrl+S` (Save), `` Ctrl+` `` (Toggle Terminal), `Ctrl+Shift+E` (Toggle Sidebar)
+- **Sidebar Explorer** — File tree folder view, context menu (rename/delete/copy path)
+- **File Icon Colors** — Color-coded file icons by extension
+- **Open Folder** — Buka folder sebagai root workspace, sidebar menampilkan isinya
+- **Create File In-Place** — Buat file baru langsung di folder yang sedang terbuka
+- **Save Dialog** — Save untitled files via File Manager picker
+- **Integrated Terminal** — Terminal panel di bawah editor
+- **Theme-aware** — Dark/Light theme mengikuti desktop theme
+- **Welcome Screen** — New File, Open File, Open Folder quick actions
 
 ### 🗄️ Database Tools
 - **Database Editor** — Query MySQL & PostgreSQL langsung dari UI
@@ -131,7 +147,7 @@ Instead of remembering dozens of CLI commands, CloudBanana DE gives you a Window
 - **Snake Game** — Classic snake game
 - **Ping Pong** — Table tennis game
 - **BNote** — Multi-tab text/code editor with syntax highlighting
-- **BWeb** — Simple WebView iframe for HTML files
+- **BWeb** — Simple WebView iframe for HTML files with toolbar refresh button
 - **Media Viewer (BPlayer)** — View images and video files
 
 ### ⚙️ Settings & Personalization
