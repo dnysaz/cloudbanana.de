@@ -284,6 +284,7 @@ export default function FileManager({ winId, winData }: Props) {
   // Extract modal state
   const [extractTarget, setExtractTarget] = useState<{ name: string; path: string } | null>(null);
   const [extractMsg, setExtractMsg] = useState('');
+  const [debInstallTarget, setDebInstallTarget] = useState<{ name: string; path: string } | null>(null);
   const [propsTarget, setPropsTarget] = useState<{ name: string; isDir: boolean; size?: number; modified?: string } | null>(null);
   const lastClickTime = useRef<Record<string, number>>({});
   const [disks, setDisks] = useState<DiskUsage[]>([]);
@@ -549,6 +550,12 @@ export default function FileManager({ winId, winData }: Props) {
       if (!isDir && name.toLowerCase().endsWith('.zip')) {
         selectOne(name);
         setExtractTarget({ name, path: fullPath });
+        return;
+      }
+      // If it's a .deb file, show install confirmation
+      if (!isDir && name.toLowerCase().endsWith('.deb')) {
+        selectOne(name);
+        setDebInstallTarget({ name, path: fullPath });
         return;
       }
       if (isDir) {
@@ -1521,6 +1528,28 @@ export default function FileManager({ winId, winData }: Props) {
             </div>
             <div className="modal-actions">
               <button className="modal-btn modal-btn-primary" onClick={() => { setDiskPropsOpen(false); setDiskPropsTarget(null); }}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Install confirmation for .deb files */}
+      {debInstallTarget && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setDebInstallTarget(null); }}>
+          <div className="modal-box" style={{ maxWidth: 420 }}>
+            <div className="modal-title">Install Package</div>
+            <p style={{ fontSize: 13, margin: '16px 0', lineHeight: 1.5 }}>
+              Install <strong>{debInstallTarget.name}</strong>?
+            </p>
+            <div className="modal-actions">
+              <button className="fm-btn" onClick={() => setDebInstallTarget(null)}>Cancel</button>
+              <button className="fm-btn primary" onClick={() => {
+                const path = debInstallTarget.path;
+                setDebInstallTarget(null);
+                openWindow('deb-installer', 'DEB Installer', { path });
+              }}>
+                <Package size={14} /> Install
+              </button>
             </div>
           </div>
         </div>
