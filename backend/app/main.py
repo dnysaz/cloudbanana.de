@@ -894,7 +894,7 @@ async def create_www_folder(request: Request, body: CreateFolderBody, user: User
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_subdomain", "10/minute"))
 async def create_subdomain(request: Request, body: SubdomainBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
     target = safe_path(body.target_dir, user)
-    if not target.is_dir():
+    if not _sudo_exists(str(target), "-d"):
         raise HTTPException(status_code=400, detail="Target directory not found")
     root_dir = str(target / body.subdomain)
     subprocess.run(["sudo", "mkdir", "-p", root_dir], capture_output=True, timeout=10)
