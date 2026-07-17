@@ -76,7 +76,7 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
     if (!debInfo) return;
     setStep(STEP_INSTALL);
     setInstallStatus('running');
-    setInstallOutput('');
+    setInstallOutput('Starting installation...\n');
     try {
       const data = await api.post<{ task_id: string; status: string }>('/deb/install', { path: debInfo.fullpath });
       pollRef.current = setInterval(async () => {
@@ -90,15 +90,16 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
             setInstallStatus('error');
             clearInterval(pollRef.current!);
           }
-        } catch {
+        } catch (e) {
+          setInstallOutput(prev => prev + '\n⚠ Polling error: ' + (e instanceof Error ? e.message : 'Connection lost'));
           clearInterval(pollRef.current!);
+          setInstallStatus('error');
         }
-      }, 1000);
+      }, 1500);
     } catch (e) {
       setInstallStatus('error');
-      setInstallOutput(e instanceof Error ? e.message : 'Install failed');
+      setInstallOutput('Failed to start installation:\n' + (e instanceof Error ? e.message : 'Unknown error'));
     }
-    setLoading(false);
   };
 
   const finish = () => {
