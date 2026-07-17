@@ -50,6 +50,7 @@ const DOCK_APP_COLORS: Record<string, string> = {
   'laravel-wizard': 'linear-gradient(135deg, #f59e0b, #f97316)',
   'laravel-management': 'linear-gradient(135deg, #f59e0b, #f97316)',
   'deb-installer': 'linear-gradient(135deg, #0078d4, #106ebe)',
+  'code-editor': 'linear-gradient(135deg, #007acc, #569cd6)',
 };
 
 const APP_ICONS: Record<string, typeof Terminal> = {
@@ -83,6 +84,7 @@ const APP_ICONS: Record<string, typeof Terminal> = {
   'laravel-wizard': LaravelIcon,
   'laravel-management': LaravelIcon,
   'deb-installer': Package,
+  'code-editor': FileText,
 };
 
 function getAppId(windowId: string): string {
@@ -133,6 +135,7 @@ function getAppTitle(appId: string): string {
     'laravel-wizard': 'Laravel Installer',
     'laravel-management': 'Laravel Manager',
     'deb-installer': 'DEB Installer',
+  'code-editor': 'Code Editor',
   };
   return map[appId] || appId;
 }

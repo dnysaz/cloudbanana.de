@@ -53,6 +53,7 @@ const APP_COLORS: Record<string, string> = {
   'laravel-management': 'linear-gradient(135deg, #f59e0b, #f97316)',
   'bweb': 'linear-gradient(135deg, #34aadc, #5ac8fa)',
   'deb-installer': 'linear-gradient(135deg, #0078d4, #106ebe)',
+  'code-editor': 'linear-gradient(135deg, #007acc, #569cd6)',
 };
 
 const ALL_APPS: AppItem[] = [
@@ -83,6 +84,7 @@ const ALL_APPS: AppItem[] = [
   { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects step-by-step', category: 'dev' },
   { id: 'laravel-management', title: 'Laravel Management', icon: LaravelIcon, desc: 'Monitor and manage Laravel projects', category: 'dev' },
   { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages with a step-by-step wizard', category: 'sys' },
+  { id: 'code-editor', title: 'Code Editor', icon: FileText, desc: 'Code editor with syntax highlighting', category: 'dev' },
 ];
 
 function getAppGradient(id: string): string {

@@ -36,6 +36,7 @@ const PM2Manager = lazy(() => import('./components/PM2Manager/PM2Manager'));
 const DatabaseEditor = lazy(() => import('./components/DatabaseEditor/DatabaseEditor'));
 const LaravelWizard = lazy(() => import('./components/LaravelWizard/LaravelWizard'));
 const LaravelManagement = lazy(() => import('./components/LaravelManagement/LaravelManagement'));
+const CodeEditor = lazy(() => import('./components/CodeEditor/CodeEditor'));
 
 const FALLBACK = <div style={{padding:'2rem', textAlign:'center', color:'var(--text-muted)', fontSize:'0.78rem'}}>Loading...</div>;
 
@@ -71,6 +72,7 @@ const WINDOW_COMPONENTS: Record<string, React.LazyExoticComponent<React.FC<{ win
   'laravel-wizard': LaravelWizard,
   'laravel-management': LaravelManagement,
   'deb-installer': DebInstaller,
+  'code-editor': CodeEditor,
 };
 
 export default function App() {
@@ -175,7 +177,8 @@ export default function App() {
           else if (id.startsWith('db-editor-')) Comp = DatabaseEditor;
           else if (id.startsWith('laravel-wizard-')) Comp = LaravelWizard;
           else if (id.startsWith('laravel-management-')) Comp = LaravelManagement;
-          else if (id.startsWith('deb-installer-')) Comp = DebInstaller;
+           else if (id.startsWith('deb-installer-')) Comp = DebInstaller;
+           else if (id.startsWith('code-editor-')) Comp = CodeEditor;
           else return null;
         }
         return (

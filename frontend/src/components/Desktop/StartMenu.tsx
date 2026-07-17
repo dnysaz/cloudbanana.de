@@ -41,6 +41,7 @@ const REGULAR: AppItem[] = [
   { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects' },
   { id: 'laravel-management', title: 'Laravel Management', icon: LaravelIcon, desc: 'Monitor Laravel projects' },
   { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages' },
+  { id: 'code-editor', title: 'Code Editor', icon: FileText, desc: 'Code editor with syntax highlighting' },
 ];
 
 export default function StartMenu() {

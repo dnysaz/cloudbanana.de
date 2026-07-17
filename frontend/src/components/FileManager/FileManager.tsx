@@ -392,8 +392,10 @@ export default function FileManager({ winId, winData }: Props) {
 
   const isImage = (name: string) => IMG_EXTS.includes(name.split('.').pop()?.toLowerCase() || '');
   const isVideo = (name: string) => VID_EXTS.includes(name.split('.').pop()?.toLowerCase() || '');
+  const CODE_EXTS = ['js','jsx','mjs','ts','tsx','py','pyw','rb','go','rs','c','h','cpp','cc','cxx','hpp','java','kt','swift','dart','sh','bash','zsh','dockerfile'];
   const isBnoteFile = (name: string) => BNOTE_EXTS.includes(name.split('.').pop()?.toLowerCase() || '');
   const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toLowerCase() || '');
+  const isCodeFile = (name: string) => CODE_EXTS.includes(name.split('.').pop()?.toLowerCase() || '');
 
   const openEditor = async (p: string) => {
     const name = p.split('/').pop() || p;
@@ -407,6 +409,10 @@ export default function FileManager({ winId, winData }: Props) {
     }
     if (isBnoteFile(name)) {
       openWindow('bnote-' + Date.now(), 'Bnote — ' + name, { path: p });
+      return;
+    }
+    if (isCodeFile(name)) {
+      openWindow('code-editor-' + Date.now(), 'Code — ' + name, { path: p });
       return;
     }
     try {
@@ -1356,6 +1362,16 @@ export default function FileManager({ winId, winData }: Props) {
               setContextItem(null);
             }}>
               <FileText size={14} /> Open with BNote
+            </button>
+          )}
+          {!contextItem.isDir && (
+            <button className="ctx-item" onClick={(e) => {
+              e.stopPropagation();
+              const p = path.replace(/\/$/, '') + '/' + contextItem.name;
+              openWindow('code-editor-' + Date.now(), 'Code — ' + contextItem.name, { path: p });
+              setContextItem(null);
+            }}>
+              <FileText size={14} /> Open with Code Editor
             </button>
           )}
           <div className="ctx-sep" />
