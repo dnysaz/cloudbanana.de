@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useDesktopStore } from '../../store/desktopStore';
 import { useAuthStore } from '../../store/authStore';
 import {
-  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText, Globe,
+  Terminal, Settings, LogOut, Search, User, Power, Pin, X, Grid, FileText, Globe, Package,
 } from 'lucide-react';
 import LaravelIcon from '../LaravelWizard/LaravelIcon';
 
@@ -40,6 +40,7 @@ const REGULAR: AppItem[] = [
   { id: 'db-editor', title: 'Database Editor', icon: FileText, desc: 'Query MySQL/PostgreSQL' },
   { id: 'laravel-wizard', title: 'Laravel Installer', icon: LaravelIcon, desc: 'Install Laravel projects' },
   { id: 'laravel-management', title: 'Laravel Management', icon: LaravelIcon, desc: 'Monitor Laravel projects' },
+  { id: 'deb-installer', title: 'DEB Installer', icon: Package, desc: 'Install .deb packages' },
 ];
 
 export default function StartMenu() {

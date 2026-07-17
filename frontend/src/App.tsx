@@ -26,6 +26,7 @@ const SqlEditor = lazy(() => import('./components/SqlEditor/SqlEditor'));
 const AppInstaller = lazy(() => import('./components/AppInstaller/AppInstaller'));
 const Widgets = lazy(() => import('./components/Desktop/Widgets'));
 const Applications = lazy(() => import('./components/Desktop/Applications'));
+const DebInstaller = lazy(() => import('./components/DebInstaller/DebInstaller'));
 const NginxEditor = lazy(() => import('./components/NginxEditor/NginxEditor'));
 const PhpEditor = lazy(() => import('./components/PhpEditor/PhpEditor'));
 const HostEditor = lazy(() => import('./components/HostEditor/HostEditor'));
@@ -69,6 +70,7 @@ const WINDOW_COMPONENTS: Record<string, React.LazyExoticComponent<React.FC<{ win
   'db-editor': DatabaseEditor,
   'laravel-wizard': LaravelWizard,
   'laravel-management': LaravelManagement,
+  'deb-installer': DebInstaller,
 };
 
 export default function App() {
@@ -173,6 +175,7 @@ export default function App() {
           else if (id.startsWith('db-editor-')) Comp = DatabaseEditor;
           else if (id.startsWith('laravel-wizard-')) Comp = LaravelWizard;
           else if (id.startsWith('laravel-management-')) Comp = LaravelManagement;
+          else if (id.startsWith('deb-installer-')) Comp = DebInstaller;
           else return null;
         }
         return (

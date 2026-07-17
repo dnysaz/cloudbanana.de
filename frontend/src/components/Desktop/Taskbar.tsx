@@ -49,6 +49,7 @@ const DOCK_APP_COLORS: Record<string, string> = {
   'db-editor': 'linear-gradient(135deg, #ef4444, #f87171)',
   'laravel-wizard': 'linear-gradient(135deg, #f59e0b, #f97316)',
   'laravel-management': 'linear-gradient(135deg, #f59e0b, #f97316)',
+  'deb-installer': 'linear-gradient(135deg, #0078d4, #106ebe)',
 };
 
 const APP_ICONS: Record<string, typeof Terminal> = {
@@ -81,6 +82,7 @@ const APP_ICONS: Record<string, typeof Terminal> = {
   'db-editor': Database,
   'laravel-wizard': LaravelIcon,
   'laravel-management': LaravelIcon,
+  'deb-installer': Package,
 };
 
 function getAppId(windowId: string): string {
@@ -130,6 +132,7 @@ function getAppTitle(appId: string): string {
     'db-editor': 'Database Editor',
     'laravel-wizard': 'Laravel Installer',
     'laravel-management': 'Laravel Manager',
+    'deb-installer': 'DEB Installer',
   };
   return map[appId] || appId;
 }
@@ -309,6 +312,7 @@ export default function Taskbar() {
       case 'db-editor': openWindow('db-editor', 'Database Editor'); break;
       case 'laravel-wizard': openWindow('laravel-wizard', 'Laravel Installer'); break;
       case 'laravel-management': openWindow('laravel-management', 'Laravel Manager'); break;
+      case 'deb-installer': openWindow('deb-installer', 'DEB Installer'); break;
       default: openWindow(appId + '-' + Date.now(), getAppTitle(appId)); break;
     }
   };

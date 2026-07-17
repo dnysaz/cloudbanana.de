@@ -1368,6 +1368,17 @@ export default function FileManager({ winId, winData }: Props) {
           <button className="ctx-item" onClick={(e) => { e.stopPropagation(); downloadItem(contextItem.name); }}>
             <Download size={14} /> Download
           </button>
+          {!contextItem.isDir && contextItem.name.toLowerCase().endsWith('.deb') && (
+            <>
+              <button className="ctx-item" onClick={(e) => {
+                e.stopPropagation(); setContextItem(null);
+                const fullPath = path.replace(/\/$/, '') + '/' + contextItem.name;
+                openWindow('deb-installer', 'DEB Installer', { path: fullPath });
+              }}>
+                <Package size={14} /> Install with DEB Installer
+              </button>
+            </>
+          )}
           {!contextItem.isDir && contextItem.name.toLowerCase().endsWith('.zip') && (
             <>
               <button className="ctx-item" onClick={(e) => { e.stopPropagation(); extractItem(contextItem.name); }}>

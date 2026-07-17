@@ -3253,6 +3253,100 @@ async def serve_frontend(full_path: str, request: Request):
         return FileResponse(index, media_type="text/html")
     raise HTTPException(status_code=404)
 
+# ========== DEB Installer API ==========
+
+_apt_fix_lock = asyncio.Lock()
+
+class DebInstallBody(BaseModel):
+    path: str
+
+@app.post("/api/v1/deb/info")
+@limiter.limit(lambda: "10/minute")
+async def deb_package_info(request: Request, body: DebInstallBody, user: User = Depends(get_current_user)):
+    p = safe_path(body.path, user)
+    if not p.name.endswith(".deb") or not _sudo_exists(str(p), "-f"):
+        raise HTTPException(status_code=400, detail="File not found or not a .deb package")
+    result = subprocess.run(
+        ["sudo", "dpkg-deb", "--show", "--showformat=${Package}|${Version}|${Architecture}|${Description}|${Maintainer}|${Homepage}|${Installed-Size}", shlex.quote(str(p))],
+        capture_output=True, text=True, timeout=15
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=400, detail=f"Failed to read package info: {result.stderr}")
+    parts = result.stdout.strip().split("|", 6)
+    return {
+        "package": parts[0] if len(parts) > 0 else "",
+        "version": parts[1] if len(parts) > 1 else "",
+        "architecture": parts[2] if len(parts) > 2 else "",
+        "description": parts[3] if len(parts) > 3 else "",
+        "maintainer": parts[4] if len(parts) > 4 else "",
+        "homepage": parts[5] if len(parts) > 5 else "",
+        "installed_size": parts[6] if len(parts) > 6 else "0",
+        "filename": p.name,
+        "fullpath": str(p),
+    }
+
+
+@app.post("/api/v1/deb/install")
+@limiter.limit(lambda: "3/minute")
+async def deb_install(request: Request, background_tasks: BackgroundTasks, body: DebInstallBody, user: User = Depends(get_current_user)):
+    p = safe_path(body.path, user)
+    if not p.name.endswith(".deb") or not _sudo_exists(str(p), "-f"):
+        raise HTTPException(status_code=400, detail="File not found or not a .deb package")
+    tid = secrets.token_hex(8)
+    with _install_tasks_lock:
+        _install_tasks[tid] = {"status": "running", "output": "Preparing installation...\n", "_ts": time.time()}
+
+    async def _run_install():
+        try:
+            with _install_tasks_lock:
+                _install_tasks[tid]["output"] += f"Installing {p.name}...\n"
+            dpkg = subprocess.run(
+                ["sudo", "dpkg", "-i", shlex.quote(str(p))],
+                capture_output=True, text=True, timeout=120
+            )
+            output = dpkg.stdout + dpkg.stderr
+            if dpkg.returncode != 0:
+                with _install_tasks_lock:
+                    _install_tasks[tid]["output"] += f"dpkg output:\n{output}\n"
+                    _install_tasks[tid]["output"] += "\nRunning apt-get install -f to fix dependencies...\n"
+            else:
+                with _install_tasks_lock:
+                    _install_tasks[tid]["output"] += f"dpkg output:\n{output}\n"
+                    _install_tasks[tid]["output"] += "\nRunning apt-get install -f...\n"
+            apt = subprocess.run(
+                ["sudo", "apt-get", "install", "-y", "-f"],
+                capture_output=True, text=True, timeout=180
+            )
+            output2 = apt.stdout + apt.stderr
+            with _install_tasks_lock:
+                _install_tasks[tid]["output"] += f"apt-get output:\n{output2}\n"
+                if dpkg.returncode == 0 and apt.returncode == 0:
+                    _install_tasks[tid]["output"] += "\nInstallation complete!"
+                    _install_tasks[tid].update({"status": "done", "_ts": time.time()})
+                else:
+                    _install_tasks[tid]["output"] += "\nInstallation completed with warnings."
+                    _install_tasks[tid].update({"status": "done", "_ts": time.time()})
+        except subprocess.TimeoutExpired:
+            with _install_tasks_lock:
+                _install_tasks[tid].update({"status": "error", "_ts": time.time()})
+                _install_tasks[tid]["output"] += "\nError: Installation timed out."
+        except Exception as e:
+            with _install_tasks_lock:
+                _install_tasks[tid].update({"status": "error", "_ts": time.time()})
+                _install_tasks[tid]["output"] += f"\nError: {str(e)}"
+
+    background_tasks.add_task(_run_install)
+    return {"task_id": tid, "status": "running"}
+
+
+@app.get("/api/v1/deb/status/{task_id}")
+async def deb_install_status(task_id: str, user: User = Depends(get_current_user)):
+    t = _install_tasks.get(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": t.get("status", "unknown"), "output": t.get("output", "")}
+
+
 @app.exception_handler(Exception)
 async def catch_all_exception_handler(request, exc):
     if isinstance(exc, StarletteHTTPException):
