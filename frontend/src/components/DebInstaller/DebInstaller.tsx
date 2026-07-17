@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { api } from '../../api';
 import { useDesktopStore } from '../../store/desktopStore';
-import { Package, File, CheckCircle, AlertCircle, Loader2, ArrowRight, ArrowLeft, Download, Info, FolderOpen } from 'lucide-react';
+import { Package, File, CheckCircle, AlertCircle, Loader2, ArrowRight, ArrowLeft, Download, Info, FolderOpen, Copy } from 'lucide-react';
 
 interface DebInfo {
   package: string;
@@ -15,7 +15,7 @@ interface DebInfo {
   fullpath: string;
 }
 
-interface TaskStatus {
+interface InstallResult {
   status: string;
   output: string;
 }
@@ -34,7 +34,8 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
   const [error, setError] = useState('');
   const [installOutput, setInstallOutput] = useState('');
   const [installStatus, setInstallStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
-  const pollRef = useRef<ReturnType<typeof setInterval>>(null);
+  const [copied, setCopied] = useState(false);
+  const outputRef = useRef<HTMLPreElement>(null);
   const fmPickId = useRef<string | null>(null);
 
   useEffect(() => {
@@ -76,34 +77,33 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
     if (!debInfo) return;
     setStep(STEP_INSTALL);
     setInstallStatus('running');
-    setInstallOutput('Starting installation...\n');
+    setInstallOutput('Installing...\n');
     try {
-      const data = await api.post<{ task_id: string; status: string }>('/deb/install', { path: debInfo.fullpath });
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await api.get<TaskStatus>('/deb/status/' + data.task_id);
-          setInstallOutput(status.output);
-          if (status.status === 'done') {
-            setInstallStatus('done');
-            clearInterval(pollRef.current!);
-          } else if (status.status === 'error') {
-            setInstallStatus('error');
-            clearInterval(pollRef.current!);
-          }
-        } catch (e) {
-          setInstallOutput(prev => prev + '\n⚠ Polling error: ' + (e instanceof Error ? e.message : 'Connection lost'));
-          clearInterval(pollRef.current!);
-          setInstallStatus('error');
-        }
-      }, 1500);
+      const result = await api.post<InstallResult>('/deb/install', { path: debInfo.fullpath });
+      setInstallOutput(result.output);
+      setInstallStatus(result.status === 'done' ? 'done' : 'error');
     } catch (e) {
       setInstallStatus('error');
-      setInstallOutput('Failed to start installation:\n' + (e instanceof Error ? e.message : 'Unknown error'));
+      setInstallOutput('Error: ' + (e instanceof Error ? e.message : 'Unknown error'));
+    }
+  };
+
+  const copyOutput = () => {
+    if (outputRef.current) {
+      navigator.clipboard.writeText(outputRef.current.textContent || '').then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }).catch(() => {
+        const range = document.createRange();
+        range.selectNodeContents(outputRef.current!);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      });
     }
   };
 
   const finish = () => {
-    if (pollRef.current) clearInterval(pollRef.current);
     if (props.winId) closeWindow(props.winId);
   };
 
@@ -212,10 +212,16 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
                  installStatus === 'done' ? 'Installation Complete' :
                  installStatus === 'error' ? 'Installation Failed' : ''}
               </div>
-              <pre style={{ margin: 0, padding: 16, fontSize: 11, fontFamily: 'Consolas, monospace', color: '#fff', background: '#1e1e1e', minHeight: 200, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {installOutput || (installStatus === 'running' ? 'Starting installation...\n' : '')}
-                {installStatus === 'running' && <span style={{ animation: 'blink 1s step-end infinite' }}>_</span>}
-              </pre>
+              <div style={{ position: 'relative' }}>
+                <button onClick={copyOutput}
+                  style={{ position: 'absolute', top: 4, right: 4, padding: '4px 8px', borderRadius: 4, border: 'none', background: 'rgba(255,255,255,0.1)', color: '#ccc', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, zIndex: 1 }}>
+                  <Copy size={12} /> {copied ? 'Copied!' : 'Copy'}
+                </button>
+                <pre ref={outputRef} style={{ margin: 0, padding: 16, fontSize: 11, fontFamily: 'Consolas, monospace', color: '#fff', background: '#1e1e1e', minHeight: 200, maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', userSelect: 'text' }}>
+                  {installOutput || (installStatus === 'running' ? 'Installing...\n' : '')}
+                  {installStatus === 'running' && <span style={{ animation: 'blink 1s step-end infinite' }}>_</span>}
+                </pre>
+              </div>
             </div>
           </div>
         )}
@@ -264,16 +270,10 @@ export default function DebInstaller(props: { winId?: string; winData?: Record<s
             </button>
           </>
         )}
-        {step === STEP_INSTALL && installStatus === 'done' && (
+        {step === STEP_INSTALL && (installStatus === 'done' || installStatus === 'error') && (
           <button onClick={() => setStep(STEP_DONE)}
-            style={{ padding: '6px 16px', borderRadius: 4, border: 'none', background: '#0078d4', color: '#fff', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-            Next <ArrowRight size={14} />
-          </button>
-        )}
-        {step === STEP_INSTALL && installStatus === 'error' && (
-          <button onClick={() => setStep(STEP_DONE)}
-            style={{ padding: '6px 16px', borderRadius: 4, border: 'none', background: '#d32f2f', color: '#fff', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
-            View Result <ArrowRight size={14} />
+            style={{ padding: '6px 16px', borderRadius: 4, border: 'none', background: installStatus === 'error' ? '#d32f2f' : '#0078d4', color: '#fff', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+            {installStatus === 'error' ? 'View Result' : 'Next'} <ArrowRight size={14} />
           </button>
         )}
         {(step === STEP_DONE) && (

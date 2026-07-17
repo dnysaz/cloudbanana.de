@@ -3302,58 +3302,61 @@ def _deb_task_read(task_id: str) -> dict | None:
     output = (task_dir / "output").read_text() if (task_dir / "output").exists() else ""
     return {"status": status, "output": output}
 
-def _run_deb_install(tid: str, deb_path: str):
+@app.post("/api/v1/deb/install")
+@limiter.limit(lambda: "3/minute")
+async def deb_install(request: Request, body: DebInstallBody, user: User = Depends(get_current_user)):
+    p = safe_path(body.path, user)
+    if not p.name.endswith(".deb") or not _sudo_exists(str(p), "-f"):
+        raise HTTPException(status_code=400, detail="File not found or not a .deb package")
+
+    loop = asyncio.get_running_loop()
+    output = await loop.run_in_executor(None, _run_deb_install_sync, str(p))
+    return output
+
+
+def _run_deb_install_sync(deb_path: str) -> dict:
+    lines = []
+    def log(msg: str):
+        lines.append(msg)
+
+    log(f"Installing {Path(deb_path).name}...")
     try:
-        out = f"Installing {Path(deb_path).name}...\n"
-        _deb_task_write(tid, "running", out)
         dpkg = subprocess.run(
             ["sudo", "dpkg", "-i", shlex.quote(deb_path)],
             capture_output=True, text=True, timeout=120
         )
-        out += f"dpkg output:\n{dpkg.stdout + dpkg.stderr}\n"
-        if dpkg.returncode != 0:
-            out += "\nRunning apt-get install -f to fix dependencies...\n"
-        else:
-            out += "\nRunning apt-get install -f...\n"
-        _deb_task_write(tid, "running", out)
+    except subprocess.TimeoutExpired:
+        log("Error: dpkg timed out after 120s")
+        return {"status": "error", "output": "\n".join(lines)}
+    except Exception as e:
+        log(f"Error running dpkg: {e}")
+        return {"status": "error", "output": "\n".join(lines)}
+
+    log(f"dpkg output:\n{dpkg.stdout + dpkg.stderr}")
+    if dpkg.returncode != 0:
+        log("Running apt-get install -f to fix dependencies...")
+    else:
+        log("Running apt-get install -f...")
+
+    try:
         apt = subprocess.run(
             ["sudo", "apt-get", "install", "-y", "-f"],
             capture_output=True, text=True, timeout=180
         )
-        out += f"apt-get output:\n{apt.stdout + apt.stderr}\n"
-        if dpkg.returncode == 0 and apt.returncode == 0:
-            out += "\nInstallation complete!"
-            _deb_task_write(tid, "done", out)
-        else:
-            out += "\nInstallation completed with warnings."
-            _deb_task_write(tid, "done", out)
     except subprocess.TimeoutExpired:
-        curr = _deb_task_read(tid)
-        out = (curr["output"] if curr else "") + "\nError: Installation timed out."
-        _deb_task_write(tid, "error", out)
+        log("Error: apt-get timed out after 180s")
+        return {"status": "error", "output": "\n".join(lines)}
     except Exception as e:
-        curr = _deb_task_read(tid)
-        out = (curr["output"] if curr else "") + f"\nError: {str(e)}"
-        _deb_task_write(tid, "error", out)
+        log(f"Error running apt-get: {e}")
+        return {"status": "error", "output": "\n".join(lines)}
 
-@app.post("/api/v1/deb/install")
-@limiter.limit(lambda: "3/minute")
-async def deb_install(request: Request, background_tasks: BackgroundTasks, body: DebInstallBody, user: User = Depends(get_current_user)):
-    p = safe_path(body.path, user)
-    if not p.name.endswith(".deb") or not _sudo_exists(str(p), "-f"):
-        raise HTTPException(status_code=400, detail="File not found or not a .deb package")
-    tid = secrets.token_hex(8)
-    _deb_task_write(tid, "running", "Preparing installation...\n")
-    background_tasks.add_task(_run_deb_install, tid, str(p))
-    return {"task_id": tid, "status": "running"}
-
-
-@app.get("/api/v1/deb/status/{task_id}")
-async def deb_install_status(task_id: str, user: User = Depends(get_current_user)):
-    t = _deb_task_read(task_id)
-    if not t:
-        raise HTTPException(status_code=404, detail="Task not found")
-    return {"status": t["status"], "output": t["output"]}
+    log(f"apt-get output:\n{apt.stdout + apt.stderr}")
+    if dpkg.returncode == 0 and apt.returncode == 0:
+        log("Installation complete!")
+        return {"status": "done", "output": "\n".join(lines)}
+    else:
+        log("Installation completed with warnings.")
+        return {"status": "done", "output": "\n".join(lines)}
 
 
 @app.exception_handler(Exception)
