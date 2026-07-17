@@ -156,6 +156,12 @@ def on_startup():
         for tid in stale:
             del tasks_dict[tid]
     logger.info(f"Cleaned up {len(stale)} stale in-memory tasks")
+    # Cleanup temp SQLite copies
+    for f in Path("/tmp").glob("sqle_*"):
+        try:
+            f.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 def background_installer(script_path: str):
     if os.path.exists(script_path):
@@ -2843,10 +2849,17 @@ def _get_sqlite_path(request_path: str | None = None, user: User | None = None) 
     """Resolve the SQLite database path. Default to app's cloudbanana.db."""
     if request_path:
         p = safe_path(request_path, user)
-        if not p.exists() or not p.is_file():
+        if not _sudo_exists(str(p), "-f"):
             raise HTTPException(status_code=400, detail="Database file not found")
-        return str(p)
-    # Default to the app's own database
+        # Copy to temp if cloudbanana user can't read it directly (e.g. /root/ files)
+        try:
+            with open(p, "rb") as _:
+                return str(p)
+        except PermissionError:
+            tmp = Path(f"/tmp/sqle_{p.name}")
+            subprocess.run(["sudo", "cp", str(p), str(tmp)], capture_output=True, timeout=10)
+            subprocess.run(["sudo", "chmod", "644", str(tmp)], capture_output=True, timeout=5)
+            return str(tmp)
     db_dir = Path(__file__).resolve().parent.parent
     return str(db_dir / "cloudbanana.db")
 

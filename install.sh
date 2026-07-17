@@ -403,6 +403,7 @@ cloudbanana ALL=(root) NOPASSWD: /usr/bin/certbot *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/openssl *
 cloudbanana ALL=(root) NOPASSWD: /bin/bash -c *
 cloudbanana ALL=(root) NOPASSWD: /usr/sbin/service ufw *
+cloudbanana ALL=(root) NOPASSWD: /usr/bin/cp *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/chmod *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/chown *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/dpkg-deb *
