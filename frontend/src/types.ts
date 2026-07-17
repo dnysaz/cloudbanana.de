@@ -152,6 +152,7 @@ export const WIN_SIZES: Record<string, { w: number; h: number }> = {
   'db-editor': { w: 960, h: 640 },
   'laravel-wizard': { w: 820, h: 680 },
   'deb-installer': { w: 640, h: 540 },
+  'code-editor': { w: 1100, h: 720 },
 };
 
 export const FONTS = ['Inter', 'system-ui', 'monospace', 'Segoe UI', 'Ubuntu', 'Cantarell'];
