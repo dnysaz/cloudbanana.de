@@ -405,6 +405,9 @@ cloudbanana ALL=(root) NOPASSWD: /bin/bash -c *
 cloudbanana ALL=(root) NOPASSWD: /usr/sbin/service ufw *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/chmod *
 cloudbanana ALL=(root) NOPASSWD: /usr/bin/chown *
+cloudbanana ALL=(root) NOPASSWD: /usr/bin/dpkg-deb *
+cloudbanana ALL=(root) NOPASSWD: /usr/bin/dpkg *
+cloudbanana ALL=(root) NOPASSWD: /usr/bin/apt-get install -f
 SUDOEOF
 chmod 440 /etc/sudoers.d/cloudbanana
 ok "Sudoers configured for user 'cloudbanana' with scoped privileges"
