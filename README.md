@@ -262,6 +262,7 @@ All API endpoints are prefixed with `/api/v1/` and proxied through Nginx.
 | POST | `/auth/users` | Create new user | Admin |
 | PATCH | `/auth/users/{user_id}` | Update user | Admin |
 | GET | `/auth/avatar/{user_id}` | Serve user avatar | None |
+| GET | `/auth/last-access` | Get last login info (IP, browser, timestamp) | User |
 
 ### System
 
@@ -272,6 +273,8 @@ All API endpoints are prefixed with `/api/v1/` and proxied through Nginx.
 | GET | `/system/info` | Hostname, IP, OS, provider |
 | GET | `/system/packages` | List installed APT packages |
 | POST | `/system/packages/remove` | Remove an APT package |
+| POST | `/system/apt` | Run apt update or upgrade (background task) |
+| GET | `/system/apt/status/{task_id}` | Check apt task status & live output |
 
 ### Software Center
 
@@ -405,6 +408,14 @@ All API endpoints are prefixed with `/api/v1/` and proxied through Nginx.
 | POST | `/laravel/{name}/toggle` | Toggle site online/offline |
 | POST | `/laravel/{name}/php-version` | Change PHP version |
 | POST | `/laravel/{name}/domain` | Change domain/port |
+| GET | `/laravel/projects` | List all Laravel projects in /var/www | Admin
+
+### Debian Packages
+
+| Method | Endpoint | Description | Rate Limit |
+|--------|----------|-------------|------------|
+| POST | `/deb/info` | Get DEB package metadata | 10/min |
+| POST | `/deb/install` | Install DEB package | 3/min |
 
 ### Server
 

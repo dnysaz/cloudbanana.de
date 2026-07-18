@@ -35,6 +35,12 @@ def run_db(fn):
         return await loop.run_in_executor(None, fn, *args, **kwargs)
     return wrapper
 
+async def run_db_async(func, *args, **kwargs):
+    """Run a sync DB function in thread pool - prevents blocking event loop."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, func, *args, **kwargs)
+
+
 def init_db():
     SQLModel.metadata.create_all(engine)
 

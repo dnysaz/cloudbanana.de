@@ -12,7 +12,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from app.utils.system import run_command
-from app.database import init_db, engine
+from app.utils import async_subprocess
+from app.database import init_db, engine, run_db_async
 from app.models import User, AuditLog, TokenBlacklist, Setting, FileLink as FileLinkModel
 from app.auth import (
     hash_password, verify_password, create_access_token,
@@ -160,6 +161,18 @@ def on_startup():
         for tid in stale:
             del tasks_dict[tid]
         total_stale += len(stale)
+    # Cleanup stale apt task files
+    try:
+        for f in Path("/tmp/cloudbanana_apt_tasks").glob("*.json"):
+            try:
+                ts = f.stat().st_mtime
+                if time.time() - ts > 3600:
+                    f.unlink(missing_ok=True)
+                    total_stale += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
     logger.info(f"Cleaned up {total_stale} stale in-memory tasks")
     # Cleanup temp SQLite copies
     for f in Path("/tmp").glob("sqle_*"):
@@ -281,42 +294,51 @@ class UpdateUserBody(BaseModel):
 async def health_check():
     db_ok = False
     try:
-        with Session(engine) as session:
-            session.exec(select(User).limit(1))
-            db_ok = True
+        def _q():
+            with Session(engine) as session:
+                session.exec(select(User).limit(1))
+        await run_db_async(_q)
+        db_ok = True
     except Exception:
         pass
     return {"status": "ok" if db_ok else "degraded", "database": "connected" if db_ok else "error"}
 
 @app.get("/api/v1/auth/check")
 async def check_admin_exists():
-    with Session(engine) as session:
-        admin = session.exec(select(User).where(User.role == "admin")).first()
-        return {"admin_exists": admin is not None}
+    def _q():
+        with Session(engine) as session:
+            admin = session.exec(select(User).where(User.role == "admin")).first()
+            return {"admin_exists": admin is not None}
+    return await run_db_async(_q)
 
 @app.post("/api/v1/auth/register")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_register", "3/hour"))
 async def register_admin(request: Request, body: RegisterBody):
     client_ip = request.client.host if request.client else "unknown"
-    with Session(engine) as session:
-        admin = session.exec(select(User).where(User.role == "admin")).first()
-        if admin:
-            add_audit_log("register_attempt", body.username, "Admin already exists", client_ip)
-            raise HTTPException(status_code=400, detail="Admin already exists")
-        user = User(
-            username=body.username,
-            email=body.email,
-            hashed_password=hash_password(body.password),
-            role="admin"
-        )
-        session.add(user)
-        try:
-            session.commit()
-            session.refresh(user)
-        except IntegrityError:
-            session.rollback()
-            add_audit_log("register_failed", body.username, "Username or email taken", client_ip)
-            raise HTTPException(status_code=400, detail="Username or email already taken")
+    def _register():
+        with Session(engine) as session:
+            admin = session.exec(select(User).where(User.role == "admin")).first()
+            if admin:
+                add_audit_log("register_attempt", body.username, "Admin already exists", client_ip)
+                return {"error": "Admin already exists"}
+            user = User(
+                username=body.username,
+                email=body.email,
+                hashed_password=hash_password(body.password),
+                role="admin"
+            )
+            session.add(user)
+            try:
+                session.commit()
+                session.refresh(user)
+                return {"status": "success"}
+            except IntegrityError:
+                session.rollback()
+                return {"error": "Username or email already taken"}
+    result = await run_db_async(_register)
+    if "error" in result:
+        add_audit_log("register_failed", body.username, result["error"], client_ip)
+        raise HTTPException(status_code=400, detail=result["error"])
     add_audit_log("register_success", body.username, "Admin registered", client_ip)
     return {"status": "success", "message": "Admin registered successfully"}
 
@@ -325,66 +347,75 @@ async def register_admin(request: Request, body: RegisterBody):
 async def login(request: Request, body: LoginBody):
     client_ip = request.client.host if request.client else "unknown"
 
-    with Session(engine) as session:
-        user = session.exec(select(User).where(User.username == body.username)).first()
-        if not user or not verify_password(body.password, user.hashed_password):
-            record_failed_attempt(body.username)
-            # Lock out if threshold reached
-            if check_account_locked(body.username):
-                add_audit_log("login_locked", body.username, "Account locked", client_ip)
-                raise HTTPException(status_code=429, detail="Account temporarily locked. Try again in 15 minutes.")
-            add_audit_log("login_failed", body.username, "Invalid credentials", client_ip)
-            raise HTTPException(status_code=401, detail="Invalid username or password")
+    def _login():
+        with Session(engine) as session:
+            user = session.exec(select(User).where(User.username == body.username)).first()
+            if not user or not verify_password(body.password, user.hashed_password):
+                record_failed_attempt(body.username)
+                if check_account_locked(body.username):
+                    add_audit_log("login_locked", body.username, "Account locked", client_ip)
+                    return {"error": "locked", "detail": "Account temporarily locked. Try again in 15 minutes."}
+                add_audit_log("login_failed", body.username, "Invalid credentials", client_ip)
+                return {"error": "invalid", "detail": "Invalid username or password"}
+            reset_lockout(body.username)
+            token = create_access_token({"sub": user.username, "role": user.role})
+            user_agent_local = request.headers.get("user-agent", "")
+            add_audit_log("login_success", user.username, user_agent_local[:500], client_ip)
+            return {"user": user, "token": token}
 
-        # Successful login
-        reset_lockout(body.username)
-        token = create_access_token({"sub": user.username, "role": user.role})
-        user_agent = request.headers.get("user-agent", "")
-        add_audit_log("login_success", user.username, user_agent[:500], client_ip)
-        resp = JSONResponse({"access_token": token, "token_type": "bearer", "role": user.role})
-        set_auth_cookies(resp, token)
-        return resp
+    result = await run_db_async(_login)
+    if "error" in result:
+        detail = result.get("detail", "Login failed")
+        if result["error"] == "locked":
+            raise HTTPException(status_code=429, detail=detail)
+        raise HTTPException(status_code=401, detail=detail)
+
+    resp = JSONResponse({"access_token": result["token"], "token_type": "bearer", "role": result["user"].role})
+    set_auth_cookies(resp, result["token"])
+    return resp
 
 @app.get("/api/v1/auth/last-access")
 async def get_last_access(user: User = Depends(get_current_user)):
     """Return the last successful login info (IP, browser, timestamp)."""
-    with Session(engine) as session:
-        log = session.exec(
-            select(AuditLog).where(
-                AuditLog.username == user.username,
-                AuditLog.action == "login_success"
-            ).order_by(AuditLog.created_at.desc()).limit(1)
-        ).first()
-        if not log:
-            return {"ip": "", "browser": "", "timestamp": ""}
-        # Also get geolocation for the IP
-        location = ""
-        if log.ip_address:
-            try:
-                import urllib.request
-                loop = asyncio.get_running_loop()
-                def _fetch():
-                    req = urllib.request.Request(
-                        f"http://ip-api.com/json/{log.ip_address}?fields=status,country,city",
-                        headers={"User-Agent": "CloudBanana/1.0"})
-                    with urllib.request.urlopen(req, timeout=3) as resp:
-                        return json.loads(resp.read())
-                geo = await loop.run_in_executor(None, _fetch)
-                if geo.get("status") == "success":
-                    parts = []
-                    if geo.get("city"):
-                        parts.append(geo["city"])
-                    if geo.get("country"):
-                        parts.append(geo["country"])
-                    location = ", ".join(parts)
-            except Exception:
-                pass
-        return {
-            "ip": log.ip_address,
-            "browser": log.detail,
-            "timestamp": log.created_at.isoformat(),
-            "location": location,
-        }
+    def _get_log():
+        with Session(engine) as session:
+            return session.exec(
+                select(AuditLog).where(
+                    AuditLog.username == user.username,
+                    AuditLog.action == "login_success"
+                ).order_by(AuditLog.created_at.desc()).limit(1)
+            ).first()
+    log = await run_db_async(_get_log)
+    if not log:
+        return {"ip": "", "browser": "", "timestamp": ""}
+    # Also get geolocation for the IP
+    location = ""
+    if log.ip_address:
+        try:
+            import urllib.request
+            loop = asyncio.get_running_loop()
+            def _fetch():
+                req = urllib.request.Request(
+                    f"http://ip-api.com/json/{log.ip_address}?fields=status,country,city",
+                    headers={"User-Agent": "CloudBanana/1.0"})
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    return json.loads(resp.read())
+            geo = await loop.run_in_executor(None, _fetch)
+            if geo.get("status") == "success":
+                parts = []
+                if geo.get("city"):
+                    parts.append(geo["city"])
+                if geo.get("country"):
+                    parts.append(geo["country"])
+                location = ", ".join(parts)
+        except Exception:
+            pass
+    return {
+        "ip": log.ip_address,
+        "browser": log.detail,
+        "timestamp": log.created_at.isoformat(),
+        "location": location,
+    }
 
 @app.post("/api/v1/auth/logout")
 async def logout(request: Request, user: User = Depends(get_current_user)):
@@ -417,13 +448,17 @@ async def change_password(request: Request, body: ChangePasswordBody, user: User
         add_audit_log("change_password_failed", user.username, "Incorrect current password")
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     # Re-query user in a fresh session to avoid DetachedInstanceError
-    with Session(engine) as session:
-        db_user = session.get(User, user.id)
-        if not db_user:
-            raise HTTPException(status_code=404, detail="User not found")
-        db_user.hashed_password = hash_password(body.new_password)
-        session.add(db_user)
-        session.commit()
+    def _q():
+        with Session(engine) as session:
+            db_user = session.get(User, user.id)
+            if not db_user:
+                return None
+            db_user.hashed_password = hash_password(body.new_password)
+            session.add(db_user)
+            session.commit()
+            return True
+    if not await run_db_async(_q):
+        raise HTTPException(status_code=404, detail="User not found")
     add_audit_log("change_password", user.username, "Password changed")
     return {"status": "success", "message": "Password changed successfully"}
 
@@ -435,18 +470,22 @@ async def get_me(user: User = Depends(get_current_user)):
 @app.get("/api/v1/auth/users/public")
 async def list_users_public():
     """Public endpoint — no auth required. Used by the login screen to show the user picker."""
-    with Session(engine) as session:
-        users = session.exec(select(User)).all()
-        return [{"id": u.id, "username": u.username, "role": u.role, "name": u.name, "avatar": u.avatar} for u in users]
+    def _q():
+        with Session(engine) as session:
+            users = session.exec(select(User)).all()
+            return [{"id": u.id, "username": u.username, "role": u.role, "name": u.name, "avatar": u.avatar} for u in users]
+    return await run_db_async(_q)
 
 @app.get("/api/v1/auth/users")
 async def list_users(admin: User = Depends(require_admin)):
-    with Session(engine) as session:
-        users = session.exec(select(User)).all()
-        return [
-            {"id": u.id, "username": u.username, "email": u.email, "role": u.role, "name": u.name, "avatar": u.avatar, "created_at": u.created_at.isoformat()}
-            for u in users
-        ]
+    def _q():
+        with Session(engine) as session:
+            users = session.exec(select(User)).all()
+            return [
+                {"id": u.id, "username": u.username, "email": u.email, "role": u.role, "name": u.name, "avatar": u.avatar, "created_at": u.created_at.isoformat()}
+                for u in users
+            ]
+    return await run_db_async(_q)
 
 @app.post("/api/v1/auth/users")
 async def create_user(body: CreateUserBody, admin: User = Depends(require_admin)):
@@ -651,7 +690,7 @@ async def list_installed_apps(user: User = Depends(get_current_user)):
     apps_dir = Path(home) / "applications"
     apps = []
     # Use sudo find to list app directories (may be owned by different user)
-    result = subprocess.run(
+    result = await async_subprocess.run(
         ["sudo", "bash", "-c", f"find {shlex.quote(str(apps_dir))} -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort"],
         capture_output=True, text=True, timeout=15
     )
@@ -661,7 +700,7 @@ async def list_installed_apps(user: User = Depends(get_current_user)):
         child = Path(dir_path)
         name = child.name
         # Find HTML file via sudo find
-        html_result = subprocess.run(
+        html_result = await async_subprocess.run(
             ["sudo", "bash", "-c", f"find {shlex.quote(str(child))} -maxdepth 1 -name '*.html' -type f 2>/dev/null | head -1"],
             capture_output=True, text=True, timeout=10
         )
@@ -670,7 +709,7 @@ async def list_installed_apps(user: User = Depends(get_current_user)):
             continue
         info = {"name": name, "title": name, "description": ""}
         # Read manifest via sudo cat
-        manifest_result = subprocess.run(
+        manifest_result = await async_subprocess.run(
             ["sudo", "bash", "-c", f"cat {shlex.quote(str(child / 'manifest.json'))} 2>/dev/null"],
             capture_output=True, text=True, timeout=10
         )
@@ -683,7 +722,7 @@ async def list_installed_apps(user: User = Depends(get_current_user)):
         # Find icon via sudo
         icon_path = None
         for ext in ['.svg', '.png', '.jpg', '.jpeg', '.webp']:
-            icon_check = subprocess.run(
+            icon_check = await async_subprocess.run(
                 ["sudo", "bash", "-c", f"test -f {shlex.quote(str(child / f'icon{ext}'))}"],
                 capture_output=True, timeout=5
             )
@@ -721,7 +760,7 @@ async def install_from_git(request: Request, body: InstallUrlBody, background_ta
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     apps_dir = Path(home) / "applications"
     # Use sudo to create directory (cloudbanana user may not have write permission)
-    subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(apps_dir))}"], capture_output=True, timeout=10)
+    await async_subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(apps_dir))}"], capture_output=True, timeout=10)
     with _install_tasks_lock:
         _install_tasks[tid] = {"status": "running", "output": "Starting...\n", "_ts": time.time()}
     background_tasks.add_task(_do_git_install, tid, body.url, apps_dir)
@@ -737,28 +776,28 @@ async def install_from_upload(request: Request, body: InstallUploadBody, user: U
     apps_dir = Path(home) / "applications"
     dest_dir = apps_dir / body.app_name
     # Use sudo for all filesystem operations (cloudbanana user lacks write permission)
-    subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))} && mkdir -p {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
+    await async_subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))} && mkdir -p {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
     try:
         import zipfile
         # Copy ZIP to /tmp first, then extract via sudo
         tmp_zip = Path(f"/tmp/app_upload_{body.app_name}.zip")
         shutil.copy2(src, tmp_zip)
-        subprocess.run(["sudo", "bash", "-c", f"unzip -o {shlex.quote(str(tmp_zip))} -d {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=30)
+        await async_subprocess.run(["sudo", "bash", "-c", f"unzip -o {shlex.quote(str(tmp_zip))} -d {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=30)
         tmp_zip.unlink(missing_ok=True)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to extract ZIP: {str(e)}")
     # Find HTML file and create manifest (use sudo find + cat)
-    result = subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(dest_dir))} -maxdepth 1 -name '*.html' -type f 2>/dev/null; find {shlex.quote(str(dest_dir))} -name '*.html' -type f 2>/dev/null | head -5"], capture_output=True, text=True, timeout=10)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(dest_dir))} -maxdepth 1 -name '*.html' -type f 2>/dev/null; find {shlex.quote(str(dest_dir))} -name '*.html' -type f 2>/dev/null | head -5"], capture_output=True, text=True, timeout=10)
     html_files = [f for f in result.stdout.strip().split('\n') if f.strip()]
     if not html_files:
-        subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
+        await async_subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(dest_dir))}"], capture_output=True, timeout=10)
         raise HTTPException(status_code=400, detail="No HTML file found in ZIP")
     # Create manifest if not exists
     manifest_path = dest_dir / "manifest.json"
-    manifest_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(manifest_path))}"], capture_output=True, timeout=5).returncode == 0
+    manifest_exists = await async_subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(manifest_path))}"], capture_output=True, timeout=5).returncode == 0
     if not manifest_exists:
         manifest_json = json.dumps({"name": body.app_name, "title": body.app_name, "description": "Installed from ZIP"}, indent=2)
-        subprocess.run(["sudo", "bash", "-c", f"cat > {shlex.quote(str(manifest_path))}"], input=manifest_json.encode(), capture_output=True, timeout=10)
+        await async_subprocess.run(["sudo", "bash", "-c", f"cat > {shlex.quote(str(manifest_path))}"], input=manifest_json.encode(), capture_output=True, timeout=10)
     return {"status": "success", "message": f"App {body.app_name} installed"}
 
 @app.delete("/api/v1/apps/installed/{app_name}")
@@ -770,11 +809,11 @@ async def uninstall_app(request: Request, app_name: str, user: User = Depends(ge
     home = f"/{user.username}" if user.username == 'root' else f"/home/{user.username}"
     app_dir = Path(home) / "applications" / app_name
     # Check if exists via sudo
-    exists = subprocess.run(["sudo", "bash", "-c", f"test -d {shlex.quote(str(app_dir))}"], capture_output=True, timeout=5).returncode == 0
+    exists = await async_subprocess.run(["sudo", "bash", "-c", f"test -d {shlex.quote(str(app_dir))}"], capture_output=True, timeout=5).returncode == 0
     if not exists:
         raise HTTPException(status_code=404, detail="App not found")
     # Use sudo to remove directory
-    result = subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(app_dir))}"], capture_output=True, text=True, timeout=30)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(app_dir))}"], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Failed to uninstall app: {result.stderr}")
     return {"status": "success", "message": f"App {app_name} uninstalled"}
@@ -883,9 +922,9 @@ async def list_www(user: User = Depends(get_current_user)):
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_www_folder", "10/minute"))
 async def create_www_folder(request: Request, body: CreateFolderBody, user: User = Depends(get_current_user)):
     folder = f"/var/www/{body.name}"
-    if _sudo_exists(folder, "-d"):
+    if await _sudo_exists_async(folder, "-d"):
         raise HTTPException(status_code=400, detail="Folder already exists")
-    r = subprocess.run(["sudo", "mkdir", "-p", folder], capture_output=True, text=True, timeout=10)
+    r = await async_subprocess.run(["sudo", "mkdir", "-p", folder], capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Failed to create folder: {r.stderr}")
     return {"status": "success", "message": f"Folder {folder} created"}
@@ -897,7 +936,7 @@ async def create_subdomain(request: Request, body: SubdomainBody, background_tas
     if not _sudo_exists(str(target), "-d"):
         raise HTTPException(status_code=400, detail="Target directory not found")
     root_dir = str(target / body.subdomain)
-    subprocess.run(["sudo", "mkdir", "-p", root_dir], capture_output=True, timeout=10)
+    await async_subprocess.run(["sudo", "mkdir", "-p", root_dir], capture_output=True, timeout=10)
     config = f"""server {{
     listen 80;
     server_name {body.subdomain}.{body.domain};
@@ -911,19 +950,19 @@ async def create_subdomain(request: Request, body: SubdomainBody, background_tas
 }}
 """
     config_name = f"{body.subdomain}.{body.domain}"
-    _sudo_write(f"/etc/nginx/sites-available/{config_name}", config)
-    if not _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
-        subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
-    r = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    await _sudo_write_async(f"/etc/nginx/sites-available/{config_name}", config)
+    if not await _sudo_exists_async(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
+        await async_subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
+    r = await async_subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         raise HTTPException(status_code=400, detail=f"Nginx config test failed: {r.stderr or r.stdout}")
-    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
+    await async_subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
     return {"status": "success", "message": f"Subdomain {body.subdomain}.{body.domain} configured"}
 
 @app.post("/api/v1/nginx/test")
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_nginx_test", "10/minute"))
 async def test_nginx_config(request: Request, user = Depends(get_current_user)):
-    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    result = await async_subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
     output = (result.stdout + result.stderr).strip()
     if result.returncode == 0:
         return {"status": "ok", "message": output}
@@ -984,12 +1023,12 @@ async def list_files(path: str = "/", user = Depends(get_current_user)):
     p = safe_path(path, user)
     import shlex
     # Use sudo to check if directory exists (cloudbanana user may not have access)
-    check = subprocess.run(["sudo", "bash", "-c", f"test -d {shlex.quote(str(p))}"], capture_output=True, timeout=10)
+    check = await async_subprocess.run(["sudo", "bash", "-c", f"test -d {shlex.quote(str(p))}"], capture_output=True, timeout=10)
     if check.returncode != 0:
         raise HTTPException(status_code=404, detail="Directory not found")
     # Use sudo to list directory contents (cloudbanana user may not have access)
     # Use find -printf with pipe-delimited format: name|type|size|mtime
-    result = subprocess.run(
+    result = await async_subprocess.run(
         ["sudo", "bash", "-c", f"find {shlex.quote(str(p))} -maxdepth 1 -mindepth 1 -printf '%f|%Y|%s|%T@\\n' 2>/dev/null"],
         capture_output=True, text=True, timeout=15
     )
@@ -1030,7 +1069,7 @@ async def create_folder(request: Request, body: FileAction, user = Depends(get_c
     p = safe_path(body.path, user)
     if _sudo_exists(str(p)):
         raise HTTPException(status_code=400, detail="Path already exists")
-    result = subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(p))}"], capture_output=True, text=True, timeout=30)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(p))}"], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Failed to create directory: {result.stderr}")
     return {"status": "ok"}
@@ -1061,7 +1100,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), path: str 
     if len(content) > _max_upload_bytes():
         raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {_max_upload_bytes() // (1024*1024)}MB")
     # Use sudo tee to write file (cloudbanana user may not have write permission)
-    result = subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(dest.parent))} && cat > {shlex.quote(str(dest))}"], input=content, capture_output=True, timeout=30)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(dest.parent))} && cat > {shlex.quote(str(dest))}"], input=content, capture_output=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to upload file")
     return {"status": "ok", "path": str(dest)}
@@ -1080,7 +1119,7 @@ async def read_file(request: Request, body: FileAction, user = Depends(get_curre
 async def write_file(request: Request, body: WriteFileBody, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
     import shlex
-    result = subprocess.run(
+    result = await async_subprocess.run(
         ["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(p.parent))} && cat > {shlex.quote(str(p))}"],
         input=body.content, capture_output=True, text=True, timeout=30
     )
@@ -1100,20 +1139,20 @@ async def remove_file(request: Request, body: FileAction, user = Depends(get_cur
     if str(p) != str(trash_dir) and str(p).startswith(str(trash_dir)):
         # Already in trash — permanently delete (use sudo bash -c)
         try:
-            result = subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(p))}"], capture_output=True, text=True, timeout=30)
+            result = await async_subprocess.run(["sudo", "bash", "-c", f"rm -rf {shlex.quote(str(p))}"], capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
                 raise HTTPException(status_code=403, detail="Permission denied: cannot permanently delete this file")
         except subprocess.TimeoutExpired:
             raise HTTPException(status_code=500, detail="Delete timed out")
         return {"status": "ok", "permanent": True}
     # Move to centralized trash (use sudo bash -c since only that is in sudoers)
-    subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(trash_dir))}"], capture_output=True, timeout=10)
+    await async_subprocess.run(["sudo", "bash", "-c", f"mkdir -p {shlex.quote(str(trash_dir))}"], capture_output=True, timeout=10)
     dest = trash_dir / p.name
     if _sudo_exists(str(dest)):
         stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         dest = trash_dir / f"{p.stem}_{stamp}{p.suffix}"
     try:
-        result = subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(p))} {shlex.quote(str(dest))}"], capture_output=True, text=True, timeout=30)
+        result = await async_subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(p))} {shlex.quote(str(dest))}"], capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             raise HTTPException(status_code=403, detail=f"Permission denied: cannot move this file to trash")
     except subprocess.TimeoutExpired:
@@ -1126,7 +1165,7 @@ async def serve_raw_file(path: str, user = Depends(get_current_user)):
     if not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
     # Read via sudo cat (cloudbanana user may not have permission to open the file directly)
-    data = subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
+    data = await async_subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
     if data.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to read file")
     media_type, _ = mimetypes.guess_type(str(p))
@@ -1136,14 +1175,17 @@ async def serve_raw_file(path: str, user = Depends(get_current_user)):
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_link", "20/minute"))
 async def create_file_link(request: Request, body: FileAction, user = Depends(get_current_user)):
     p = safe_path(body.path, user)
-    if not _sudo_exists(str(p), "-f"):
+    if not await _sudo_exists_async(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
-    with Session(engine) as session:
-        link = FileLinkModel(path=str(p))
-        session.add(link)
-        session.commit()
-        session.refresh(link)
-    return {"id": link.id, "size": p.stat().st_size}
+    def _q():
+        with Session(engine) as session:
+            link = FileLinkModel(path=str(p))
+            session.add(link)
+            session.commit()
+            session.refresh(link)
+            return link.id
+    link_id = await run_db_async(_q)
+    return {"id": link_id, "size": p.stat().st_size}
 
 def _make_fake_user(username: str, role: str):
     """Create a minimal user-like object for safe_path."""
@@ -1224,7 +1266,7 @@ async def serve_file_for_webview(serve_path: str, request: Request, token: str =
                 err_msg = result.stderr.decode("utf-8", errors="replace").strip()[:500]
                 logger.warning(f"PHP execution failed for {p}: {err_msg}")
                 # Fall back to serving raw PHP source
-                data = subprocess.run(
+                data = await async_subprocess.run(
                     ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
                     capture_output=True, timeout=15
                 )
@@ -1243,7 +1285,7 @@ async def serve_file_for_webview(serve_path: str, request: Request, token: str =
         except FileNotFoundError:
             # PHP not installed — fall back to serving raw source
             logger.warning("PHP not found on system, serving raw file")
-            data = subprocess.run(
+            data = await async_subprocess.run(
                 ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
                 capture_output=True, timeout=15
             )
@@ -1253,7 +1295,7 @@ async def serve_file_for_webview(serve_path: str, request: Request, token: str =
             return Response(content=data.stdout, media_type=media_type or "application/octet-stream")
 
     # ---- Non-PHP files: serve raw content ----
-    data = subprocess.run(
+    data = await async_subprocess.run(
         ["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"],
         capture_output=True, timeout=30
     )
@@ -1271,7 +1313,7 @@ async def serve_raw_by_link(file_id: str, user = Depends(get_current_user)):
         p = Path(link.path)
         if not _sudo_exists(str(p), "-f"):
             raise HTTPException(status_code=404, detail="File not found")
-    data = subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
+    data = await async_subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
     if data.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to read file")
     media_type, _ = mimetypes.guess_type(str(p))
@@ -1296,7 +1338,7 @@ async def rename_file(request: Request, body: RenameBody, user = Depends(get_cur
     if not _sudo_exists(str(p)):
         raise HTTPException(status_code=404, detail="Path not found")
     new_p = p.parent / body.new_name
-    result = subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(p))} {shlex.quote(str(new_p))}"], capture_output=True, text=True, timeout=30)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(p))} {shlex.quote(str(new_p))}"], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to rename")
     return {"status": "ok"}
@@ -1311,9 +1353,9 @@ async def copy_file(request: Request, body: CopyMoveBody, user = Depends(get_cur
     if _sudo_exists(str(dst)):
         raise HTTPException(status_code=400, detail="Destination already exists")
     if _sudo_exists(str(src), "-d"):
-        result = subprocess.run(["sudo", "bash", "-c", f"cp -r {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
+        result = await async_subprocess.run(["sudo", "bash", "-c", f"cp -r {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
     else:
-        result = subprocess.run(["sudo", "bash", "-c", f"cp {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
+        result = await async_subprocess.run(["sudo", "bash", "-c", f"cp {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to copy")
     return {"status": "ok"}
@@ -1327,7 +1369,7 @@ async def move_file(request: Request, body: CopyMoveBody, user = Depends(get_cur
         raise HTTPException(status_code=404, detail="Source not found")
     if _sudo_exists(str(dst)):
         raise HTTPException(status_code=400, detail="Destination already exists")
-    result = subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
+    result = await async_subprocess.run(["sudo", "bash", "-c", f"mv {shlex.quote(str(src))} {shlex.quote(str(dst))}"], capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to move")
     return {"status": "ok"}
@@ -1445,7 +1487,7 @@ async def empty_trash(request: Request, user: User = Depends(get_current_user)):
     # Use sudo bash -c to empty trash (files may be owned by different users)
     try:
         import shlex
-        subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(trash_dir))} -mindepth 1 -delete"], capture_output=True, text=True, timeout=30)
+        await async_subprocess.run(["sudo", "bash", "-c", f"find {shlex.quote(str(trash_dir))} -mindepth 1 -delete"], capture_output=True, text=True, timeout=30)
     except Exception:
         logger.warning("Failed to empty trash", exc_info=True)
     return {"status": "ok", "message": "Trash emptied"}
@@ -1477,7 +1519,7 @@ async def restore_trash(request: Request, body: TrashRestoreBody, user: User = D
     # Use sudo bash -c mv since cloudbanana user may not own the trash file
     try:
         import shlex
-        result = subprocess.run(
+        result = await async_subprocess.run(
             ["sudo", "bash", "-c", f"mv {shlex.quote(str(src))} {shlex.quote(str(dest))}"],
             capture_output=True, text=True, timeout=30
         )
@@ -1493,7 +1535,7 @@ async def restore_trash(request: Request, body: TrashRestoreBody, user: User = D
 async def list_system_packages(user: User = Depends(get_current_user)):
     try:
         # Single dpkg-query call with Essential field — avoids 1000+ subprocess calls
-        result = subprocess.run(
+        result = await async_subprocess.run(
             ["dpkg-query", "-W", "-f", '${Package}\t${Version}\t${Installed-Size}\t${Essential}\n'],
             capture_output=True, text=True, timeout=30
         )
@@ -1535,7 +1577,7 @@ class RemovePkgBody(BaseModel):
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_package_remove", "5/minute"))
 async def remove_system_package(request: Request, body: RemovePkgBody, user: User = Depends(get_current_user)):
     try:
-        result = subprocess.run(
+        result = await async_subprocess.run(
             ["apt-get", "remove", "-y", body.package],
             capture_output=True, text=True, timeout=120
         )
@@ -1730,7 +1772,7 @@ class CronUpdateBody(BaseModel):
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_cron", "5/minute"))
 async def update_cron(request: Request, body: CronUpdateBody, user: User = Depends(get_current_user)):
     try:
-        result = subprocess.run(["crontab", "-"], input=body.content, text=True, capture_output=True, timeout=10)
+        result = await async_subprocess.run(["crontab", "-"], input=body.content, text=True, capture_output=True, timeout=10)
         if result.returncode != 0:
             raise HTTPException(status_code=400, detail=result.stderr or "Failed to update crontab")
         return {"status": "ok", "message": "Crontab updated"}
@@ -1743,7 +1785,7 @@ async def update_cron(request: Request, body: CronUpdateBody, user: User = Depen
 async def list_ssl_certs(user: User = Depends(get_current_user)):
     certs = []
     # Use sudo to list letsencrypt directories (cloudbanana user may not have access)
-    listing = subprocess.run(
+    listing = await async_subprocess.run(
         ["sudo", "bash", "-c", f"find /etc/letsencrypt/live -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort"],
         capture_output=True, text=True, timeout=15
     )
@@ -1753,12 +1795,12 @@ async def list_ssl_certs(user: User = Depends(get_current_user)):
         domain_dir = Path(domain_dir_str)
         cert_path = domain_dir / "fullchain.pem"
         key_path = domain_dir / "privkey.pem"
-        cert_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(cert_path))}"], capture_output=True, timeout=5).returncode == 0
-        key_exists = subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(key_path))}"], capture_output=True, timeout=5).returncode == 0
+        cert_exists = await async_subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(cert_path))}"], capture_output=True, timeout=5).returncode == 0
+        key_exists = await async_subprocess.run(["sudo", "bash", "-c", f"test -f {shlex.quote(str(key_path))}"], capture_output=True, timeout=5).returncode == 0
         info = {"domain": domain_dir.name, "cert_path": str(cert_path) if cert_exists else "", "key_path": str(key_path) if key_exists else "", "source": "letsencrypt"}
         if cert_exists:
             try:
-                r = subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-dates", "-subject", "-issuer"], capture_output=True, text=True, timeout=5)
+                r = await async_subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-dates", "-subject", "-issuer"], capture_output=True, text=True, timeout=5)
                 for line in r.stdout.strip().split("\n"):
                     if "=" not in line:
                         continue
@@ -1767,7 +1809,7 @@ async def list_ssl_certs(user: User = Depends(get_current_user)):
             except Exception:
                 pass
             try:
-                r = subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-enddate"], capture_output=True, text=True, timeout=5)
+                r = await async_subprocess.run(["sudo", "openssl", "x509", "-in", str(cert_path), "-noout", "-enddate"], capture_output=True, text=True, timeout=5)
                 if "=" in r.stdout:
                     enddate = r.stdout.split("=", 1)[1].strip()
                     from datetime import datetime
@@ -1792,7 +1834,7 @@ async def get_available_domains(user: User = Depends(get_current_user)):
     config_dirs = ["/etc/nginx/sites-enabled", "/etc/nginx/conf.d", "/etc/nginx/sites-available"]
     for d in config_dirs:
         # Use sudo find to list files (cloudbanana user may not have access)
-        listing = subprocess.run(
+        listing = await async_subprocess.run(
             ["sudo", "bash", "-c", f"find {shlex.quote(d)} -maxdepth 1 -type f -o -type l 2>/dev/null"],
             capture_output=True, text=True, timeout=10
         )
@@ -1801,7 +1843,7 @@ async def get_available_domains(user: User = Depends(get_current_user)):
                 continue
             try:
                 # Read via sudo cat
-                text_result = subprocess.run(
+                text_result = await async_subprocess.run(
                     ["sudo", "bash", "-c", f"cat {shlex.quote(config_path)}"],
                     capture_output=True, text=True, timeout=10
                 )
@@ -1823,7 +1865,7 @@ async def check_certbot(user: User = Depends(get_current_user)):
     if not certbot:
         return {"installed": False, "version": None}
     try:
-        r = subprocess.run([certbot, "--version"], capture_output=True, text=True, timeout=5)
+        r = await async_subprocess.run([certbot, "--version"], capture_output=True, text=True, timeout=5)
         return {"installed": True, "version": r.stdout.strip() or r.stderr.strip()}
     except subprocess.TimeoutExpired:
         logger.warning("Certbot version check timed out")
@@ -1835,7 +1877,7 @@ async def check_certbot(user: User = Depends(get_current_user)):
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_certbot_install", "3/hour"))
 async def install_certbot(request: Request, user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["apt-get", "install", "-y", "certbot"], capture_output=True, text=True, timeout=120)
+        r = await async_subprocess.run(["apt-get", "install", "-y", "certbot"], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             raise HTTPException(status_code=500, detail=r.stderr or "Failed to install certbot")
         return {"status": "ok", "message": "Certbot installed successfully"}
@@ -1852,11 +1894,11 @@ async def request_cert(request: Request, body: CertRequest, user: User = Depends
     if body.email:
         email_flag = ["--email", body.email]
     # Stop nginx so standalone mode can bind port 80
-    subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, timeout=15)
+    await async_subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, timeout=15)
     try:
         # Use sudo bash -c for certbot (sudoers only allows bash -c for arbitrary commands)
         certbot_cmd = f"{shlex.quote(certbot)} certonly --standalone --non-interactive --agree-tos -d {shlex.quote(body.domain)} {' '.join(shlex.quote(a) for a in email_flag)}"
-        r = subprocess.run(["sudo", "bash", "-c", certbot_cmd], capture_output=True, text=True, timeout=120)
+        r = await async_subprocess.run(["sudo", "bash", "-c", certbot_cmd], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             detail = r.stderr or r.stdout or "Certbot failed"
             return {"status": "error", "message": detail.strip()}
@@ -1868,7 +1910,7 @@ async def request_cert(request: Request, body: CertRequest, user: User = Depends
         logger.exception(f"Unexpected error requesting certificate for {body.domain}")
         return {"status": "error", "message": "Certificate request failed unexpectedly"}
     finally:
-        r = subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True, timeout=15)
+        r = await async_subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True, timeout=15)
         if r.returncode != 0:
             logger.warning(f"Failed to restart nginx after certbot: {r.stderr}")
 
@@ -2043,7 +2085,7 @@ async def laravel_check_composer(user: User = Depends(get_current_user)):
     if not composer:
         return {"installed": False, "version": None}
     try:
-        r = subprocess.run([composer, "--version"], capture_output=True, text=True, timeout=10)
+        r = await async_subprocess.run([composer, "--version"], capture_output=True, text=True, timeout=10)
         return {"installed": True, "version": r.stdout.strip() or r.stderr.strip()}
     except Exception:
         return {"installed": True, "version": "unknown"}
@@ -2109,10 +2151,10 @@ async def laravel_ensure_php(request: Request, user: User = Depends(get_current_
         _install_php_extensions(php_ver)
         return {"installed": True, "version": php_ver, "extensions_installed": True}
     # PHP belum ada — install PHP 8.3 dari PPA ondrej
-    subprocess.run(["add-apt-repository", "-y", "ppa:ondrej/php"], capture_output=True, timeout=30)
-    subprocess.run(["apt-get", "update", "-qq"], capture_output=True, timeout=60)
+    await async_subprocess.run(["add-apt-repository", "-y", "ppa:ondrej/php"], capture_output=True, timeout=30)
+    await async_subprocess.run(["apt-get", "update", "-qq"], capture_output=True, timeout=60)
     install_pkgs = ["php8.3", "php8.3-cli"] + [f"php8.3-{e}" for e in LARAVEL_PHP_EXTENSIONS]
-    subprocess.run(["apt-get", "install", "-y"] + install_pkgs, capture_output=True, timeout=180)
+    await async_subprocess.run(["apt-get", "install", "-y"] + install_pkgs, capture_output=True, timeout=180)
     new_ver = _get_php_ver()
     if not new_ver:
         raise HTTPException(status_code=500, detail="Failed to install PHP")
@@ -2122,17 +2164,17 @@ async def laravel_ensure_php(request: Request, user: User = Depends(get_current_
 @limiter.limit(lambda: settings_cache.get_rate("rate_limit_laravel_install_composer", "5/hour"))
 async def laravel_install_composer(request: Request, user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["apt-get", "install", "-y", "composer"], capture_output=True, text=True, timeout=120)
+        r = await async_subprocess.run(["apt-get", "install", "-y", "composer"], capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             # Fallback: download composer.phar
-            r2 = subprocess.run(["php", "-r", "copy('https://getcomposer.org/installer', 'composer-setup.php');"], capture_output=True, text=True, timeout=30, cwd="/tmp")
+            r2 = await async_subprocess.run(["php", "-r", "copy('https://getcomposer.org/installer', 'composer-setup.php');"], capture_output=True, text=True, timeout=30, cwd="/tmp")
             if r2.returncode != 0:
                 raise HTTPException(status_code=500, detail=r2.stderr or "Failed to install composer")
-            r3 = subprocess.run(["php", "composer-setup.php"], capture_output=True, text=True, timeout=60, cwd="/tmp")
+            r3 = await async_subprocess.run(["php", "composer-setup.php"], capture_output=True, text=True, timeout=60, cwd="/tmp")
             if r3.returncode != 0:
                 raise HTTPException(status_code=500, detail=r3.stderr or "Failed to run composer installer")
             shutil.move("/tmp/composer.phar", "/usr/local/bin/composer")
-            subprocess.run(["chmod", "+x", "/usr/local/bin/composer"], capture_output=True, timeout=5)
+            await async_subprocess.run(["chmod", "+x", "/usr/local/bin/composer"], capture_output=True, timeout=5)
         return {"status": "ok", "message": "Composer installed"}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Installation timed out")
@@ -2152,7 +2194,7 @@ async def laravel_clone(request: Request, body: LaravelCloneBody, user: User = D
         cmd.extend(["--branch", body.branch])
     cmd.extend(["--", body.repo, str(target)])
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        r = await async_subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
             raise HTTPException(status_code=400, detail=r.stderr or "Git clone failed")
         return {"status": "ok", "message": "Repository cloned"}
@@ -2209,13 +2251,13 @@ async def laravel_composer_install(request: Request, body: LaravelProjectBody, u
     # pake --ignore-platform-req agar tahan terhadap project yg butuh ext aneh
     try:
         cmd = [composer, "install", "--no-interaction", "--no-scripts"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=body.path)
+        r = await async_subprocess.run(cmd, capture_output=True, text=True, timeout=600, cwd=body.path)
         if r.returncode == 0:
             return {"status": "ok", "message": "Dependencies installed", "output": r.stdout[-2000:]}
         # Fallback: coba update dengan ignore platform req + no-scripts
         addLog = (r.stderr or "")[-1000:]
         cmd2 = [composer, "update", "--no-interaction", "--ignore-platform-req=ext-*", "--no-scripts"]
-        r2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=600, cwd=body.path)
+        r2 = await async_subprocess.run(cmd2, capture_output=True, text=True, timeout=600, cwd=body.path)
         if r2.returncode == 0:
             return {"status": "ok", "message": "Dependencies installed (platform reqs ignored)", "output": (addLog + "\n" + r2.stdout[-2000:]).strip()}
         # Jika package terlanjur terinstall, post-script error masih ok
@@ -2247,7 +2289,7 @@ async def laravel_save_env(body: LaravelEnvBody, user: User = Depends(get_curren
 @app.post("/api/v1/laravel/storage-link")
 async def laravel_storage_link(body: LaravelProjectBody, user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["php", "artisan", "storage:link"], capture_output=True, text=True, timeout=30, cwd=body.path)
+        r = await async_subprocess.run(["php", "artisan", "storage:link"], capture_output=True, text=True, timeout=30, cwd=body.path)
         if r.returncode != 0:
             raise HTTPException(status_code=400, detail=r.stderr or "storage:link failed")
         return {"status": "ok", "message": "Storage linked"}
@@ -2257,7 +2299,7 @@ async def laravel_storage_link(body: LaravelProjectBody, user: User = Depends(ge
 @app.post("/api/v1/laravel/app-key")
 async def laravel_app_key(body: LaravelProjectBody, user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["php", "artisan", "key:generate", "--force"], capture_output=True, text=True, timeout=30, cwd=body.path)
+        r = await async_subprocess.run(["php", "artisan", "key:generate", "--force"], capture_output=True, text=True, timeout=30, cwd=body.path)
         if r.returncode != 0:
             raise HTTPException(status_code=400, detail=r.stderr or "key:generate failed")
         return {"status": "ok", "message": "App key generated"}
@@ -2267,7 +2309,7 @@ async def laravel_app_key(body: LaravelProjectBody, user: User = Depends(get_cur
 @app.post("/api/v1/laravel/migrate")
 async def laravel_migrate(body: LaravelProjectBody, user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["php", "artisan", "migrate", "--force"], capture_output=True, text=True, timeout=120, cwd=body.path)
+        r = await async_subprocess.run(["php", "artisan", "migrate", "--force"], capture_output=True, text=True, timeout=120, cwd=body.path)
         if r.returncode != 0:
             raise HTTPException(status_code=400, detail=r.stderr or "Migration failed")
         return {"status": "ok", "message": "Database migrated"}
@@ -2315,14 +2357,14 @@ async def laravel_permissions(request: Request, body: LaravelPermissionsBody, us
     ]
     for d in dirs:
         if d.exists():
-            subprocess.run(["chown", "-R", "www-data:www-data", str(d)], capture_output=True, timeout=30)
-            subprocess.run(["chmod", "-R", "755", str(d)], capture_output=True, timeout=30)
+            await async_subprocess.run(["chown", "-R", "www-data:www-data", str(d)], capture_output=True, timeout=30)
+            await async_subprocess.run(["chmod", "-R", "755", str(d)], capture_output=True, timeout=30)
     # Fix any SQLite database files (in database/ or at project root)
     for pattern in ["database/database.sqlite", "database/*.sqlite", "*.sqlite", proj.name]:
         for f in proj.glob(pattern):
             if f.is_file():
-                subprocess.run(["chown", "www-data:www-data", str(f)], capture_output=True, timeout=10)
-                subprocess.run(["chmod", "664", str(f)], capture_output=True, timeout=10)
+                await async_subprocess.run(["chown", "www-data:www-data", str(f)], capture_output=True, timeout=10)
+                await async_subprocess.run(["chmod", "664", str(f)], capture_output=True, timeout=10)
     return {"status": "ok", "message": "Permissions fixed"}
 
 @app.post("/api/v1/laravel/assets-build")
@@ -2346,17 +2388,17 @@ async def laravel_assets_build(request: Request, body: LaravelProjectBody, user:
     is_yarn = (proj / "yarn.lock").exists()
     try:
         if is_yarn:
-            r = subprocess.run(["yarn", "install", "--frozen-lockfile"], capture_output=True, text=True, timeout=120, cwd=proj)
+            r = await async_subprocess.run(["yarn", "install", "--frozen-lockfile"], capture_output=True, text=True, timeout=120, cwd=proj)
             if r.returncode != 0:
-                r = subprocess.run(["yarn", "install"], capture_output=True, text=True, timeout=120, cwd=proj)
+                r = await async_subprocess.run(["yarn", "install"], capture_output=True, text=True, timeout=120, cwd=proj)
             if r.returncode == 0:
-                subprocess.run(["yarn", "run", "build"], capture_output=True, text=True, timeout=180, cwd=proj)
+                await async_subprocess.run(["yarn", "run", "build"], capture_output=True, text=True, timeout=180, cwd=proj)
         else:
-            r = subprocess.run(["npm", "ci", "--ignore-scripts"], capture_output=True, text=True, timeout=120, cwd=proj)
+            r = await async_subprocess.run(["npm", "ci", "--ignore-scripts"], capture_output=True, text=True, timeout=120, cwd=proj)
             if r.returncode != 0:
-                r = subprocess.run(["npm", "install", "--legacy-peer-deps"], capture_output=True, text=True, timeout=120, cwd=proj)
+                r = await async_subprocess.run(["npm", "install", "--legacy-peer-deps"], capture_output=True, text=True, timeout=120, cwd=proj)
             if r.returncode == 0:
-                subprocess.run(["npm", "run", "build"], capture_output=True, text=True, timeout=180, cwd=proj)
+                await async_subprocess.run(["npm", "run", "build"], capture_output=True, text=True, timeout=180, cwd=proj)
         return {"status": "ok", "message": "Frontend assets built"}
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="Build timed out")
@@ -2414,19 +2456,19 @@ async def laravel_vhost(request: Request, body: LaravelVhostBody, background_tas
 }}
 """
     config_name = server_name if server_name != "_" else f"{proj.name}-port{listen_port}"
-    _sudo_write(f"/etc/nginx/sites-available/{config_name}", config)
-    if not _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
-        subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
+    await _sudo_write_async(f"/etc/nginx/sites-available/{config_name}", config)
+    if not await _sudo_exists_async(f"/etc/nginx/sites-enabled/{config_name}", "-e"):
+        await async_subprocess.run(["sudo", "ln", "-s", f"/etc/nginx/sites-available/{config_name}", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
 
     if server_name == "_":
-        subprocess.run(["sudo", "ufw", "allow", str(listen_port)], capture_output=True, timeout=10)
+        await async_subprocess.run(["sudo", "ufw", "allow", str(listen_port)], capture_output=True, timeout=10)
 
-    r = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
+    r = await async_subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
-        _sudo_exists(f"/etc/nginx/sites-enabled/{config_name}", "-e") and subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
-        _sudo_exists(f"/etc/nginx/sites-available/{config_name}", "-e") and subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-available/{config_name}"], capture_output=True, timeout=10)
+        await _sudo_exists_async(f"/etc/nginx/sites-enabled/{config_name}", "-e") and await async_subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-enabled/{config_name}"], capture_output=True, timeout=10)
+        await _sudo_exists_async(f"/etc/nginx/sites-available/{config_name}", "-e") and await async_subprocess.run(["sudo", "rm", "-f", f"/etc/nginx/sites-available/{config_name}"], capture_output=True, timeout=10)
         raise HTTPException(status_code=400, detail=f"Nginx config test failed: {r.stderr or r.stdout}")
-    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
+    await async_subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, timeout=15)
 
     result = {
         "status": "ok",
@@ -2455,13 +2497,13 @@ def _request_cert_for_domain(domain: str):
 @app.get("/api/v1/server/ip")
 async def get_server_ip(user: User = Depends(get_current_user)):
     try:
-        r = subprocess.run(["curl", "-s", "https://api.ipify.org"], capture_output=True, text=True, timeout=10)
+        r = await async_subprocess.run(["curl", "-s", "https://api.ipify.org"], capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             return {"ip": r.stdout.strip()}
     except Exception:
         pass
     try:
-        r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
+        r = await async_subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
         ip = r.stdout.strip().split()[0] if r.stdout.strip() else "127.0.0.1"
         return {"ip": ip}
     except Exception:
@@ -2532,7 +2574,7 @@ async def laravel_management(user: User = Depends(get_current_user)):
     _php_version = None
     if shutil.which("php"):
         try:
-            r = subprocess.run(["php", "-v"], capture_output=True, text=True, timeout=5)
+            r = await async_subprocess.run(["php", "-v"], capture_output=True, text=True, timeout=5)
             if r.returncode == 0:
                 m = re.search(r'PHP\s+([\d.]+)', r.stdout.split('\n')[0])
                 if m:
@@ -2578,7 +2620,7 @@ async def laravel_management(user: User = Depends(get_current_user)):
         if has_env and app_key_set:
             if shutil.which("php"):
                 try:
-                    r = subprocess.run(
+                    r = await async_subprocess.run(
                         ["php", "artisan", "migrate:status", "--json"],
                         capture_output=True, text=True, timeout=30, cwd=child
                     )
@@ -2606,7 +2648,7 @@ async def laravel_management(user: User = Depends(get_current_user)):
         # Project size
         project_size = None
         try:
-            r = subprocess.run(["du", "-sh", "--exclude=vendor", str(child)], capture_output=True, text=True, timeout=10)
+            r = await async_subprocess.run(["du", "-sh", "--exclude=vendor", str(child)], capture_output=True, text=True, timeout=10)
             if r.returncode == 0:
                 project_size = r.stdout.strip().split('\t')[0]
         except Exception:
@@ -2685,7 +2727,7 @@ async def laravel_env_write(request: Request, body: LaravelEnvWriteBody, user: U
     if not proj.exists() or not (proj / "artisan").exists():
         raise HTTPException(status_code=400, detail="Invalid project path")
     env_file = proj / ".env"
-    _sudo_write(env_file, body.content)
+    await _sudo_write_async(env_file, body.content)
     return {"status": "ok"}
 
 @app.get("/api/v1/laravel/php-versions")
@@ -2706,7 +2748,7 @@ async def laravel_migrate(request: Request, name: str, body: LaravelProjectBody,
     if not shutil.which("php"):
         raise HTTPException(status_code=400, detail="PHP not found")
     try:
-        r = subprocess.run(
+        r = await async_subprocess.run(
             ["php", "artisan", "migrate", "--force"],
             capture_output=True, text=True, timeout=120, cwd=proj
         )
@@ -2728,7 +2770,7 @@ async def laravel_rollback(request: Request, name: str, body: LaravelProjectBody
     if not shutil.which("php"):
         raise HTTPException(status_code=400, detail="PHP not found")
     try:
-        r = subprocess.run(
+        r = await async_subprocess.run(
             ["php", "artisan", "migrate:rollback", "--force"],
             capture_output=True, text=True, timeout=120, cwd=proj
         )
@@ -2750,7 +2792,7 @@ async def laravel_fresh(request: Request, name: str, body: LaravelProjectBody, u
     if not shutil.which("php"):
         raise HTTPException(status_code=400, detail="PHP not found")
     try:
-        r = subprocess.run(
+        r = await async_subprocess.run(
             ["php", "artisan", "migrate:fresh", "--force", "--seed"],
             capture_output=True, text=True, timeout=180, cwd=proj
         )
@@ -2803,10 +2845,10 @@ async def laravel_toggle(name: str, body: LaravelProjectBody, user: User = Depen
         enabled = Path("/etc/nginx/sites-enabled") / vhost.name
         is_currently_enabled = enabled.exists()
         if is_currently_enabled:
-            _sudo_unlink(enabled)
+            await _sudo_unlink_async(enabled)
             status = "disabled"
         else:
-            _sudo_symlink(vhost, enabled)
+            await _sudo_symlink_async(vhost, enabled)
             status = "enabled"
         _nginx_reload()
     return {"status": status}
@@ -2832,7 +2874,7 @@ async def laravel_change_php(name: str, body: LaravelManagePhpBody, user: User =
         )
         if new_content == content:
             raise HTTPException(status_code=400, detail=f"PHP version already set to {php_ver}")
-        _sudo_write(vhost, new_content)
+        await _sudo_write_async(vhost, new_content)
         _nginx_reload()
     return {"status": "ok", "php_version": php_ver}
 
@@ -2853,11 +2895,11 @@ async def laravel_domain(name: str, body: LaravelManageDomainBody, user: User = 
         content = re.sub(r'listen\s+\d+', f'listen {listen_port}', content)
         content = re.sub(r'server_name\s+[^;]+;', f'server_name {server_name};', content)
         enabled = Path("/etc/nginx/sites-enabled") / vhost.name
-        _sudo_unlink(enabled)
-        _sudo_unlink(vhost)
+        await _sudo_unlink_async(enabled)
+        await _sudo_unlink_async(vhost)
         new_name = server_name if server_name != "_" else f"{name}-port{listen_port}"
         new_vhost = Path("/etc/nginx/sites-available") / new_name
-        _sudo_write(new_vhost, content)
+        await _sudo_write_async(new_vhost, content)
         _sudo_symlink(new_vhost, Path("/etc/nginx/sites-enabled") / new_name)
         _nginx_reload()
     return {
@@ -3049,6 +3091,79 @@ async def wget_status(task_id: str, user = Depends(get_current_user)):
     if not t:
         raise HTTPException(status_code=404, detail="Task not found")
     return t
+
+# ========== System APT Update/Upgrade ==========
+
+_APT_STORE = Path("/tmp/cloudbanana_apt_tasks")
+_APT_STORE.mkdir(parents=True, exist_ok=True)
+
+def _apt_save(tid: str, data: dict):
+    """Save task status to file (shared across uvicorn workers)."""
+    import json as _json
+    try:
+        (_APT_STORE / f"{tid}.json").write_text(_json.dumps(data))
+    except Exception as e:
+        logger.warning(f"Failed to save apt task {tid}: {e}")
+
+def _apt_load(tid: str) -> dict | None:
+    """Load task status from file."""
+    import json as _json
+    f = _APT_STORE / f"{tid}.json"
+    if not f.exists():
+        return None
+    try:
+        return _json.loads(f.read_text())
+    except Exception as e:
+        logger.warning(f"Failed to load apt task {tid}: {e}")
+        return None
+
+class AptBody(BaseModel):
+    action: str  # "update" or "upgrade"
+
+@app.post("/api/v1/system/apt")
+@limiter.limit(lambda: "5/minute")
+async def run_apt(request: Request, body: AptBody, background_tasks: BackgroundTasks, user: User = Depends(get_current_user)):
+    if body.action not in ("update", "upgrade"):
+        raise HTTPException(status_code=400, detail="Action must be 'update' or 'upgrade'")
+    tid = secrets.token_hex(8)
+    _apt_save(tid, {"status": "running", "output": ""})
+    background_tasks.add_task(_do_apt_action, tid, body.action)
+    return {"task_id": tid, "status": "running"}
+
+@app.get("/api/v1/system/apt/status/{task_id}")
+async def apt_status(task_id: str, user = Depends(get_current_user)):
+    t = _apt_load(task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return t
+
+def _do_apt_action(tid: str, action: str):
+    """Run apt update or upgrade in background, capturing output.
+    Writes to file periodically (debounced every 500ms) to reduce I/O overhead.
+    """
+    output_lines = []
+    last_save = 0.0
+    try:
+        cmd = ["sudo", "bash", "-c", f"DEBIAN_FRONTEND=noninteractive apt-get {action} -y 2>&1"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in iter(proc.stdout.readline, ''):
+            if line:
+                output_lines.append(line)
+                # Debounce: only write to file every 500ms to reduce disk I/O
+                now = time.time()
+                if now - last_save >= 0.5:
+                    _apt_save(tid, {"status": "running", "output": "".join(output_lines[-200:])})
+                    last_save = now
+        proc.wait()
+        # Final save with complete output
+        full_output = "".join(output_lines)
+        if proc.returncode == 0:
+            _apt_save(tid, {"status": "done", "output": full_output})
+        else:
+            _apt_save(tid, {"status": "error", "output": full_output + f"\nExit code: {proc.returncode}"})
+    except Exception as e:
+        logger.error(f"apt {action} task {tid} failed: {e}")
+        _apt_save(tid, {"status": "error", "output": str(e)})
 
 # ========== Terminal (WebSocket PTY) ==========
 
@@ -3308,7 +3423,7 @@ async def deb_package_info(request: Request, body: DebInstallBody, user: User = 
     p = safe_path(body.path, user)
     if not p.name.endswith(".deb") or not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=400, detail="File not found or not a .deb package")
-    result = subprocess.run(
+    result = await async_subprocess.run(
         ["sudo", "dpkg-deb", "--show", "--showformat=${Package}|${Version}|${Architecture}|${Description}|${Maintainer}|${Homepage}|${Installed-Size}", shlex.quote(str(p))],
         capture_output=True, text=True, timeout=15
     )

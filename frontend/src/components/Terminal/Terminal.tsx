@@ -289,52 +289,127 @@ export default function Terminal(_props: { winId?: string }) {
   };
 
   return (
-    <div className="term-container">
-      <div className="term-toolbar">
-        <div className="term-tabs">
-          {tabs.map((tab) => (
-            <div
-              key={tab.id}
-              className={`term-tab${tab.id === activeTab ? ' active' : ''}`}
-              onClick={() => {
-                setActiveTab(tab.id);
-                setTimeout(() => initSession(tab.id), 50);
-              }}
-              onMouseDown={(e) => e.button === 1 && closeTab(tab.id)}
-            >
-              <TermIcon size={11} />
-              <span>{tab.title}</span>
-              <button
-                className="term-tab-close"
-                onClick={(e) => closeTab(tab.id, e)}
-                title="Close tab"
-              >
-                <X size={10} />
-              </button>
-            </div>
-          ))}
-          <button className="term-tab-add" onClick={addTab} title="New tab">
-            <Plus size={13} />
+    <div className="term-container" style={{
+      display: 'flex', flexDirection: 'column', height: '100%',
+      background: theme === 'dark' ? '#0d0d0d' : '#fafafa',
+      borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+    }}>
+      {/* Toolbar */}
+      <div className="term-toolbar" style={{
+        display: 'flex', alignItems: 'center',
+        padding: '0.25rem 0.4rem', gap: '0.25rem',
+        background: theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+        borderBottom: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)'}`,
+        minHeight: '32px', userSelect: 'none',
+      }}>
+        <div className="term-tabs" style={{
+          display: 'flex', alignItems: 'center', gap: '2px', flex: 1, overflow: 'hidden',
+        }}>
+          {tabs.map((tab) => {
+            const isActive = tab.id === activeTab;
+            return (
+              <div
+                key={tab.id}
+                className={`term-tab${isActive ? ' active' : ''}`}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setTimeout(() => initSession(tab.id), 50);
+                }}
+                onMouseDown={(e) => e.button === 1 && closeTab(tab.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.25rem',
+                  padding: '0.2rem 0.5rem', cursor: 'pointer',
+                  fontSize: '0.68rem', fontWeight: isActive ? 600 : 400,
+                  borderRadius: '6px',
+                  background: isActive
+                    ? (theme === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
+                    : 'transparent',
+                  color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                  transition: 'all 0.15s',
+                  border: '1px solid transparent',
+                  borderColor: isActive
+                    ? (theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)')
+                    : 'transparent',
+                  whiteSpace: 'nowrap',
+                  maxWidth: '120px',
+                }}>
+                <TermIcon size={10} style={{ flexShrink: 0 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{tab.title}</span>
+                <button
+                  className="term-tab-close"
+                  onClick={(e) => closeTab(tab.id, e)}
+                  title="Close tab"
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    padding: '1px', margin: 0, lineHeight: 1,
+                    color: 'var(--text-muted)', opacity: 0.5,
+                    transition: 'opacity 0.15s',
+                    display: 'flex', alignItems: 'center',
+                    borderRadius: '3px',
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                  onMouseLeave={(e) => e.currentTarget.style.opacity = '0.5'}
+                >
+                  <X size={9} />
+                </button>
+              </div>
+            );
+          })}
+          <button
+            className="term-tab-add"
+            onClick={addTab}
+            title="New tab"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0.2rem 0.3rem',
+              color: 'var(--text-muted)', opacity: 0.6,
+              transition: 'all 0.15s', borderRadius: '4px',
+              display: 'flex', alignItems: 'center',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.background = 'none'; }}
+          >
+            <Plus size={12} />
           </button>
         </div>
 
-        <div className="term-toolbar-right">
-          <div className="term-toolbar-group">
-            <button
-              className="term-tb-btn"
-              onClick={toggleTermTheme}
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-            >
-              {theme === 'dark' ? <Sun size={13} /> : <Moon size={13} />}
-            </button>
-          </div>
+        <div className="term-toolbar-right" style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
+          <button
+            className="term-tb-btn"
+            onClick={toggleTermTheme}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0.2rem 0.35rem', borderRadius: '4px',
+              color: 'var(--text-muted)', opacity: 0.7,
+              transition: 'all 0.15s',
+              display: 'flex', alignItems: 'center',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.background = 'none'; }}
+          >
+            {theme === 'dark' ? <Sun size={11} /> : <Moon size={11} />}
+          </button>
 
-          <div className="term-toolbar-group term-font-selector">
-            <Type size={11} />
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.2rem',
+            padding: '0.1rem 0.3rem',
+            borderRadius: '4px',
+            fontSize: '0.62rem',
+            color: 'var(--text-muted)',
+          }}>
+            <Type size={9} style={{ opacity: 0.6 }} />
             <select
               value={fontFamily}
               onChange={(e) => changeFont(e.target.value)}
               title="Terminal font"
+              style={{
+                background: 'none', border: 'none',
+                color: 'var(--text-secondary)', cursor: 'pointer',
+                fontSize: '0.62rem', padding: '1px',
+                outline: 'none',
+                maxWidth: '70px',
+              }}
             >
               {TERMINAL_FONTS.map((f) => (
                 <option key={f} value={f}>{FONT_LABELS[f] || f}</option>
@@ -342,18 +417,45 @@ export default function Terminal(_props: { winId?: string }) {
             </select>
           </div>
 
-          <div className="term-toolbar-group">
-            <button className="term-tb-btn" onClick={addTab} title="New tab">
-              <Plus size={13} />
-            </button>
-            <button className="term-tb-btn" onClick={openNewWindow} title="New window">
-              <PanelRight size={13} />
-            </button>
-          </div>
+          <button
+            className="term-tb-btn"
+            onClick={addTab}
+            title="New tab"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0.2rem 0.35rem', borderRadius: '4px',
+              color: 'var(--text-muted)', opacity: 0.7,
+              transition: 'all 0.15s',
+              display: 'flex', alignItems: 'center',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.background = 'none'; }}
+          >
+            <Plus size={11} />
+          </button>
+          <button
+            className="term-tb-btn"
+            onClick={openNewWindow}
+            title="New window"
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              padding: '0.2rem 0.35rem', borderRadius: '4px',
+              color: 'var(--text-muted)', opacity: 0.7,
+              transition: 'all 0.15s',
+              display: 'flex', alignItems: 'center',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; e.currentTarget.style.background = 'none'; }}
+          >
+            <PanelRight size={11} />
+          </button>
         </div>
       </div>
 
-      <div className="term-body">
+      {/* Terminal body */}
+      <div className="term-body" style={{
+        flex: 1, position: 'relative', overflow: 'hidden',
+      }}>
         {tabs.map((tab) => (
           <div
             key={tab.id}
@@ -362,13 +464,36 @@ export default function Terminal(_props: { winId?: string }) {
               else containersRef.current.delete(tab.id);
             }}
             className={`term-xterm-wrap${tab.id === activeTab ? ' active' : ''}`}
+            style={{
+              position: 'absolute', inset: 0,
+              display: tab.id === activeTab ? 'block' : 'none',
+            }}
           />
         ))}
       </div>
 
-      <div className="term-status-bar">
-        <span className={`term-status-dot ${connected ? 'connected' : ''}`} />
-        <span>{connected ? 'Connected' : 'Disconnected'}</span>
+      {/* Status bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.3rem',
+        padding: '0.15rem 0.5rem',
+        fontSize: '0.6rem',
+        color: connected ? '#22c55e' : 'var(--text-muted)',
+        background: theme === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+        borderTop: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)'}`,
+        userSelect: 'none',
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: connected ? '#22c55e' : 'var(--text-muted)',
+          boxShadow: connected ? '0 0 4px rgba(34,197,94,0.5)' : 'none',
+          transition: 'all 0.3s',
+        }} />
+        <span style={{ fontWeight: connected ? 600 : 400 }}>
+          {connected ? 'Connected' : 'Disconnected'}
+        </span>
+        <span style={{ marginLeft: 'auto', color: 'var(--text-muted)', opacity: 0.5 }}>
+          {tabs.length} tab{tabs.length > 1 ? 's' : ''}
+        </span>
       </div>
     </div>
   );

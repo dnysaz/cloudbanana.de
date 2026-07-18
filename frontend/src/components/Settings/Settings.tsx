@@ -1094,47 +1094,39 @@ function SystemTab() {
   const [output, setOutput] = useState('');
   const [resetConfirm, setResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [showOutput, setShowOutput] = useState(false);
   const intervalRef = useRef<number | null>(null);
   const outputRef = useRef<HTMLPreElement>(null);
 
   const handleHardReset = async () => {
     setResetting(true);
     try {
-      // Clear Cache API (service worker caches)
       const cacheKeys = await caches.keys();
       await Promise.all(cacheKeys.map(k => caches.delete(k)));
     } catch {}
-    // Clear CloudBanana-specific localStorage keys
     const cbKeys: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && key.startsWith('cb-')) {
-        cbKeys.push(key);
-      }
+      if (key && key.startsWith('cb-')) cbKeys.push(key);
     }
     cbKeys.forEach(k => localStorage.removeItem(k));
-    // Clear sessionStorage
     sessionStorage.clear();
-    // Force reload with cache-busting param
     window.location.href = '/?_=' + Date.now();
   };
 
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, []);
 
   useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
+    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [output]);
 
   const startApt = async (action: 'update' | 'upgrade') => {
     if (status === 'running') return;
     setOutput('');
     setStatus('running');
+    setShowOutput(true);
     try {
       const data = await api.post<{ task_id: string; status: string }>('/system/apt', { action });
       const tid = data.task_id;
@@ -1159,25 +1151,129 @@ function SystemTab() {
     }
   };
 
+  const statusColors: Record<string, string> = {
+    idle: 'var(--text-muted)',
+    running: 'var(--accent)',
+    done: '#22c55e',
+    error: '#ef4444',
+  };
+
+  const statusIcons: Record<string, React.ReactNode> = {
+    idle: <RefreshCw size={13} />,
+    running: <RefreshCw size={13} className="st-spin" />,
+    done: <Check size={13} />,
+    error: <AlertTriangle size={13} />,
+  };
+
   return (
     <>
       <h3>System Update</h3>
-      <p>Update package lists or upgrade all packages</p>
-      <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem' }}>
-        <button className="fm-btn" onClick={() => startApt('update')} disabled={status === 'running'}>
-          <RefreshCw size={13} className={status === 'running' ? 'st-spin' : ''} /> Update
+      <p>Update package lists or upgrade all system packages</p>
+
+      {/* Status badge */}
+      {status !== 'idle' && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+          padding: '0.25rem 0.6rem', borderRadius: 'var(--radius-lg)',
+          fontSize: '0.68rem', fontWeight: 600,
+          background: status === 'running' ? 'var(--accent-light)' : status === 'done' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          color: statusColors[status],
+          marginBottom: '0.5rem',
+        }}>
+          {statusIcons[status]}
+          {status === 'running' ? 'Running...' : status === 'done' ? 'Completed Successfully' : 'Failed'}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{
+        display: 'flex', gap: '0.5rem', marginBottom: '0.75rem',
+        flexWrap: 'wrap',
+      }}>
+        <button
+          className="fm-btn"
+          onClick={() => startApt('update')}
+          disabled={status === 'running'}
+          style={{
+            opacity: status === 'running' ? 0.6 : 1,
+            transition: 'all 0.2s',
+          }}>
+          <RefreshCw size={13} className={status === 'running' ? 'st-spin' : ''} />
+          Update Package Lists
         </button>
-        <button className="fm-btn primary" onClick={() => startApt('upgrade')} disabled={status === 'running'}>
-          <Package size={13} /> Upgrade
+        <button
+          className="fm-btn primary"
+          onClick={() => startApt('upgrade')}
+          disabled={status === 'running'}
+          style={{
+            opacity: status === 'running' ? 0.6 : 1,
+            transition: 'all 0.2s',
+          }}>
+          <Package size={13} />
+          Upgrade All Packages
         </button>
+        {status !== 'idle' && showOutput && (
+          <button
+            className="fm-btn"
+            onClick={() => setShowOutput(!showOutput)}
+            style={{ fontSize: '0.68rem' }}>
+            {showOutput ? <X size={12} /> : <Terminal size={12} />}
+            {showOutput ? 'Hide Output' : 'Show Output'}
+          </button>
+        )}
       </div>
-      {output && (
-        <div className="st-terminal">
-          <div className="st-term-header">
-            <Terminal size={11} />
-            <span>{status === 'running' ? 'Running...' : status === 'done' ? 'Completed' : 'Error'}</span>
+
+      {/* Terminal output */}
+      {showOutput && output && (
+        <div style={{
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-lg)',
+          overflow: 'hidden',
+          marginBottom: '0.75rem',
+          animation: 'fadeIn 0.2s ease',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.35rem',
+            padding: '0.35rem 0.6rem',
+            background: 'var(--bg-surface)',
+            borderBottom: '1px solid var(--border-subtle)',
+            fontSize: '0.65rem', fontWeight: 600,
+            color: statusColors[status],
+          }}>
+            <Terminal size={10} />
+            <span style={{ flex: 1 }}>
+              {status === 'running' ? 'APT Output — Running' :
+               status === 'done' ? 'APT Output — Completed' :
+               status === 'error' ? 'APT Output — Error' : 'APT Output'}
+            </span>
+            {status === 'running' && (
+              <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>live</span>
+            )}
           </div>
-          <pre className="st-term-output" ref={outputRef}>{output}</pre>
+          <pre
+            ref={outputRef}
+            style={{
+              margin: 0, padding: '0.6rem',
+              fontSize: '0.68rem', lineHeight: 1.5,
+              fontFamily: "'Menlo','Monaco','DejaVu Sans Mono',monospace",
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+              maxHeight: '300px', overflow: 'auto',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            }}>{output}</pre>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '0.25rem 0.6rem',
+            background: 'var(--bg-surface)',
+            borderTop: '1px solid var(--border-subtle)',
+            fontSize: '0.6rem',
+            color: 'var(--text-muted)',
+          }}>
+            <span>{output.split('\n').length} lines</span>
+            <span>{output.length} characters</span>
+          </div>
         </div>
       )}
 
