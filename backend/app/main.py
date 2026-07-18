@@ -1165,7 +1165,7 @@ async def serve_raw_file(path: str, user = Depends(get_current_user)):
     if not _sudo_exists(str(p), "-f"):
         raise HTTPException(status_code=404, detail="File not found")
     # Read via sudo cat (cloudbanana user may not have permission to open the file directly)
-    data = await async_subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, timeout=30)
+    data = await async_subprocess.run(["sudo", "bash", "-c", f"cat {shlex.quote(str(p))}"], capture_output=True, text=False, timeout=30)
     if data.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to read file")
     media_type, _ = mimetypes.guess_type(str(p))
@@ -3239,7 +3239,8 @@ async def terminal_ws(ws: WebSocket):
     finally:
         stop_reader.set()
         os.close(master_fd)
-        os.waitpid(pid, 0)
+        # Don't block event loop — waitpid in executor to avoid hanging all workers
+        loop.run_in_executor(None, os.waitpid, pid, 0)
 
 # ========== BananaBrowser Web Proxy ==========
 

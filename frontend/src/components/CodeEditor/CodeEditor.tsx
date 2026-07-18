@@ -166,7 +166,12 @@ export default function CodeEditor({ winId, winData }: Props) {
   const tabsRef = useRef(tabs);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
-  const dark = isDark();
+  const [dark, setDark] = useState(isDark);
+  useEffect(() => {
+    const handler = () => setDark(isDark());
+    document.addEventListener('theme-change', handler);
+    return () => document.removeEventListener('theme-change', handler);
+  }, []);
 
   const c = {
     bg: dark ? '#1a1a2e' : '#fafafa',

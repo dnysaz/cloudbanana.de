@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { User } from '../../types';
-import { api, getToken } from '../../api';
+import { api } from '../../api';
 import { useAuthStore } from '../../store/authStore';
 import { Palette, Type, Users, Info, Monitor, Terminal, RefreshCw, Package, UserPlus, Image, Trash, Trash2, AlertTriangle, X, Minus, Pencil, Eye, EyeOff, Scale, BookOpen, ChevronDown, ChevronRight, Copy, Check, Shield, Globe, Keyboard, ScrollText, Search, Clock, Sun, Moon, LogIn, Key, LayoutDashboard, Gauge } from 'lucide-react';
 import { useDesktopStore } from '../../store/desktopStore';
@@ -17,10 +17,17 @@ function AppearanceTab() {
   const currentWinOpacity = localStorage.getItem('cb-win-opacity') || '0.92';
   const currentWp = localStorage.getItem('cb-wallpaper') || 'purple';
   const [widgetsOn, setWidgetsOn] = useState(!!document.getElementById('win-widgets'));
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('theme-dark'));
+
+  useEffect(() => {
+    const handler = () => setIsDark(document.documentElement.classList.contains('theme-dark'));
+    document.addEventListener('theme-change', handler);
+    return () => document.removeEventListener('theme-change', handler);
+  }, []);
 
   const toggleTheme = () => {
-    const isDark = document.documentElement.classList.toggle('theme-dark');
-    localStorage.setItem('cb-theme', isDark ? 'dark' : 'light');
+    const nowDark = document.documentElement.classList.toggle('theme-dark');
+    localStorage.setItem('cb-theme', nowDark ? 'dark' : 'light');
     document.dispatchEvent(new CustomEvent('theme-change'));
   };
 
@@ -33,8 +40,6 @@ function AppearanceTab() {
     document.documentElement.style.fontSize = size + 'px';
     localStorage.setItem('cb-size', size);
   };
-
-  const isDark = document.documentElement.classList.contains('theme-dark');
 
   const selectWp = (id: string) => {
     const wp = WALLPAPERS.find((w) => w.id === id);
@@ -61,7 +66,7 @@ function AppearanceTab() {
       <div className="st-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '0.5rem' }}>
         <span className="st-label"><Palette size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Theme</span>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => { if (isDark) { toggleTheme(); } }}
+          <button onClick={() => { if (document.documentElement.classList.contains('theme-dark')) { toggleTheme(); } }}
             style={{
               flex: 1, padding: '0.75rem', borderRadius: 'var(--radius-lg)',
               border: isDark ? '2px solid var(--border-input)' : '2px solid var(--accent)',
@@ -72,7 +77,7 @@ function AppearanceTab() {
             <Sun size={22} style={{ display: 'block', margin: '0 auto 0.25rem' }} />
             <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>Light</div>
           </button>
-          <button onClick={() => { if (!isDark) { toggleTheme(); } }}
+          <button onClick={() => { if (!document.documentElement.classList.contains('theme-dark')) { toggleTheme(); } }}
             style={{
               flex: 1, padding: '0.75rem', borderRadius: 'var(--radius-lg)',
               border: isDark ? '2px solid var(--accent)' : '2px solid var(--border-input)',
@@ -235,7 +240,6 @@ function UsersTab() {
   const [editPassword, setEditPassword] = useState('');
   const [editPasswordConfirm, setEditPasswordConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [editAvatar, setEditAvatar] = useState('');
   const [editAvatarPreview, setEditAvatarPreview] = useState('');
   const avatarUrlRef = useRef('');
   // Add User modal states
@@ -300,8 +304,8 @@ function UsersTab() {
     setEditPasswordConfirm('');
     setShowPassword(false);
     const av = u.avatar || '';
-    setEditAvatar(av);
-    setEditAvatarPreview(av);
+    // Use the public avatar endpoint (no auth required) instead of the raw files URL
+    setEditAvatarPreview(av ? `/api/v1/auth/avatar/${u.id}?t=${Date.now()}` : '');
     avatarUrlRef.current = av;
     setEditRole(u.role);
     setEditError('');
@@ -319,6 +323,7 @@ function UsersTab() {
     }
     setAddAvatarPreview('');
     addAvatarUrlRef.current = '';
+    addFmPickId.current = null;
     setAddError('');
     setAddSuccess('');
   };
@@ -361,9 +366,9 @@ function UsersTab() {
     if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
       URL.revokeObjectURL(editAvatarPreview);
     }
-    setEditAvatar('');
     setEditAvatarPreview('');
     avatarUrlRef.current = '';
+    fmPickId.current = null;
     setEditRole('');
     setEditError('');
     setEditSuccess('');
@@ -448,17 +453,13 @@ function UsersTab() {
       if (addFmPickId.current) {
         addAvatarUrlRef.current = fullUrl;
         try {
-          const token = getToken() || '';
-          const headers: Record<string, string> = {};
-          if (token) headers['Authorization'] = `Bearer ${token}`;
-          const res = await fetch(rawPath, { headers });
+          const res = await fetch(rawPath, { credentials: 'include' });
           if (res.ok) {
             const blob = await res.blob();
             setAddAvatarPreview(URL.createObjectURL(blob));
           }
-          // If fetch fails, keep existing preview
-        } catch {
-          // Keep existing preview on error
+        } catch (e) {
+          console.error('Avatar preview fetch failed (add)', e);
         }
         closeWindow(addFmPickId.current);
         addFmPickId.current = null;
@@ -469,19 +470,13 @@ function UsersTab() {
       if (fmPickId.current) {
         avatarUrlRef.current = fullUrl;
         try {
-          const token = getToken() || '';
-          const headers: Record<string, string> = {};
-          if (token) headers['Authorization'] = `Bearer ${token}`;
-          const res = await fetch(rawPath, { headers });
+          const res = await fetch(rawPath, { credentials: 'include' });
           if (res.ok) {
             const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            setEditAvatarPreview(blobUrl);
-            setEditAvatar(blobUrl); // enable Remove button
+            setEditAvatarPreview(URL.createObjectURL(blob));
           }
-          // If fetch fails, keep existing preview (don't fallback to fullUrl — it can't auth)
-        } catch {
-          // Keep existing preview on error
+        } catch (e) {
+          console.error('Avatar preview fetch failed (edit)', e);
         }
         closeWindow(fmPickId.current);
         fmPickId.current = null;
@@ -717,6 +712,7 @@ function UsersTab() {
                 <div className="edit-avatar-preview">
                   {addAvatarPreview ? (
                     <img src={addAvatarPreview} alt=""
+                      onError={() => setAddAvatarPreview('')}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                   ) : (
                     <div className="edit-avatar-placeholder">
@@ -854,6 +850,7 @@ function UsersTab() {
                 <div className="edit-avatar-preview">
                   {editAvatarPreview ? (
                     <img src={editAvatarPreview} alt=""
+                      onError={() => setEditAvatarPreview('')}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                   ) : (
                     <div className="edit-avatar-placeholder">
@@ -870,13 +867,12 @@ function UsersTab() {
                   }}>
                   <Image size={12} /> Browse Files
                 </button>
-                {editAvatar && (
+                {editAvatarPreview && (
                   <button className="fm-btn small" style={{ width: '100%', justifyContent: 'center', marginTop: '0.2rem', color: 'var(--danger)', borderColor: 'rgba(217,48,37,0.2)' }}
                     onClick={() => {
                       if (editAvatarPreview && editAvatarPreview.startsWith('blob:')) {
                         URL.revokeObjectURL(editAvatarPreview);
                       }
-                      setEditAvatar('');
                       setEditAvatarPreview('');
                       avatarUrlRef.current = '';
                     }}>
