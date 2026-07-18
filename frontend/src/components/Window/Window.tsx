@@ -71,10 +71,6 @@ export default function Window({ id, title, children }: Props) {
     } catch {}
   };
 
-  const winOpacity = parseFloat(localStorage.getItem('cb-win-opacity') || '0.92');
-  const isDark = document.documentElement.classList.contains('theme-dark');
-  const bgRgb = isDark ? '30, 28, 46' : '255, 255, 255';
-
   const style: React.CSSProperties = {
     left: win.maximized ? 0 : left + 'px',
     top: win.maximized ? 0 : top + 'px',
@@ -82,7 +78,6 @@ export default function Window({ id, title, children }: Props) {
     height: win.maximized ? '100%' : sz.h + 'px',
     zIndex: isWidget ? 40 : win.zIndex,
     display: win.minimized ? 'none' : 'flex',
-    background: `rgba(${bgRgb}, ${winOpacity})`,
     borderRadius: win.maximized ? 0 : undefined,
   };
 

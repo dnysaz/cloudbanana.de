@@ -66,23 +66,23 @@ loader.init().then(monaco => {
   monaco.editor.defineTheme('cloudbanana-light', {
     base: 'vs', inherit: true,
     rules: [
-      { token: 'comment', foreground: '008000', fontStyle: 'italic' },
-      { token: 'keyword', foreground: '0000ff' },
-      { token: 'string', foreground: 'a31515' },
-      { token: 'number', foreground: '098658' },
+      { token: 'comment', foreground: '#008000', fontStyle: 'italic' },
+      { token: 'keyword', foreground: '#0000ff' },
+      { token: 'string', foreground: '#a31515' },
+      { token: 'number', foreground: '#098658' },
     ],
     colors: {
       'editor.background': '#fafafa',
-      'editor.foreground': '#333',
+      'editor.foreground': '#333333',
       'editor.lineHighlightBackground': '#e8e8e8',
       'editor.selectionBackground': '#add6ff',
-      'editorCursor.foreground': '#333',
-      'editorLineNumber.foreground': '#ccc',
-      'editorLineNumber.activeForeground': '#666',
+      'editorCursor.foreground': '#333333',
+      'editorLineNumber.foreground': '#cccccc',
+      'editorLineNumber.activeForeground': '#666666',
       'editorIndentGuide.background': '#e0e0e0',
       'editorWidget.background': '#f5f5f5',
-      'input.background': '#fff',
-      'input.foreground': '#333',
+      'input.background': '#ffffff',
+      'input.foreground': '#333333',
       'list.hoverBackground': '#e8e8e8',
       'list.activeSelectionBackground': '#d4d4d4',
     },
@@ -278,10 +278,24 @@ export default function CodeEditor({ winId, winData }: Props) {
     setTreeLoading(false);
   };
 
+  const getParentPath = (p: string) => {
+    if (p === '/' || p === '') return null;
+    const cleaned = p.replace(/\/$/, '');
+    const idx = cleaned.lastIndexOf('/');
+    return idx <= 0 ? '/' : cleaned.slice(0, idx);
+  };
+
   const navigateDir = async (dirPath: string) => {
     setShowEmptyNewFile(false);
     setRootPath(dirPath);
     await loadTree(dirPath);
+  };
+
+  const navigateParent = async () => {
+    const parent = getParentPath(rootPath);
+    if (parent !== null) {
+      await navigateDir(parent);
+    }
   };
 
   const activeTab = tabs.find(t => t.path === activePath) || null;
@@ -674,100 +688,153 @@ export default function CodeEditor({ winId, winData }: Props) {
             <div style={{ flex: 1, overflow: 'auto' }}>
               {rootPath ? (
                 <div style={{ padding: '0 8px 6px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', fontSize: 11, color: c.textDim, overflow: 'hidden' }}>
-                    <Folder size={12} style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rootPath}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: '4px 6px', fontSize: 11, color: c.textDim, flexWrap: 'wrap', minHeight: 24 }}>
+                    <button
+                      onClick={() => navigateDir('/')}
+                      title="Root directory"
+                      style={{ background:'none', border:'none', color: c.textMuted, cursor:'pointer', padding:'1px 4px', borderRadius:3, fontSize:11, fontWeight:500, display:'flex', alignItems:'center', gap:2 }}
+                      onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <Folder size={11} style={{ flexShrink:0 }} />
+                    </button>
+                    {rootPath.split('/').filter(Boolean).map((seg, i, arr) => {
+                      const pathUpTo = '/' + rootPath.split('/').filter(Boolean).slice(0, i + 1).join('/');
+                      const isLast = i === arr.length - 1;
+                      return (
+                        <span key={i} style={{ display:'flex', alignItems:'center', gap:1 }}>
+                          <span style={{ color: c.textDim, fontSize:10, margin:'0 1px' }}>/</span>
+                          <button
+                            onClick={() => !isLast && navigateDir(pathUpTo)}
+                            style={{
+                              background:'none', border:'none', cursor: isLast ? 'default' : 'pointer',
+                              padding:'1px 4px', borderRadius:3,
+                              fontSize:11, fontWeight: isLast ? 600 : 400,
+                              color: isLast ? c.text : c.textMuted,
+                              maxWidth: 80, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                            }}
+                            onMouseEnter={e => { if (!isLast) e.currentTarget.style.background = c.sidebarHover; }}
+                            onMouseLeave={e => { if (!isLast) e.currentTarget.style.background = 'transparent'; }}
+                            title={isLast ? '' : pathUpTo}
+                          >
+                            {seg}
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                   {treeLoading ? (
                     <div style={{ padding: '6px', fontSize: 11, color: c.textDim }}>Loading...</div>
-                  ) : tree.length === 0 ? (
-                    <div style={{ padding: '6px' }}>
-                      <div style={{ fontSize: 11, color: c.textDim, marginBottom: 6 }}>Empty folder</div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {showEmptyNewFile ? (
-                          <>
-                            <input autoFocus value={newFileName}
-                              onChange={e => setNewFileName(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') handleCreateInTree();
-                                if (e.key === 'Escape') setShowEmptyNewFile(false);
-                              }}
-                              placeholder="filename.ext"
-                              style={{
-                                flex: 1, padding: '4px 6px', fontSize: 11,
-                                border: `1px solid ${c.border}`, borderRadius: 4,
-                                background: c.bg, color: c.text, outline: 'none',
-                              }}
-                            />
-                            <button onClick={handleCreateInTree}
-                              style={{
-                                padding: '3px 8px', border: 'none', borderRadius: 4,
-                                background: c.btnBg, color: c.btnText, fontSize: 11,
-                                cursor: 'pointer', fontWeight: 600,
-                              }}>Create</button>
-                            <button onClick={() => setShowEmptyNewFile(false)}
-                              style={{
-                                padding: '3px 6px', border: `1px solid ${c.border}`, borderRadius: 4,
-                                background: 'none', color: c.textMuted, fontSize: 11,
-                                cursor: 'pointer',
-                              }}><X size={11} /></button>
-                          </>
-                        ) : (
-                          <button onClick={() => { setNewFileName(''); setShowEmptyNewFile(true); }}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 4,
-                              padding: '3px 8px', border: 'none', borderRadius: 4,
-                              background: 'none', color: c.fileIconColor, fontSize: 11,
-                              cursor: 'pointer', fontWeight: 500,
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
-                            onMouseLeave={e => e.currentTarget.style.background = 'none'}
-                          >
-                            <Plus size={12} />
-                            <span>New File</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
                   ) : (
-                    tree.map(item => (
-                      <div key={item.path}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 16px',
-                          cursor: 'pointer', borderRadius: 3, fontSize: 12,
-                          color: c.textMuted,
-                          position: 'relative',
-                        }}
-                        onClick={() => {
-                          if (renameSidebar) { setRenameSidebar(null); return; }
-                          item.is_dir ? navigateDir(item.path) : openFile(item.path);
-                        }}
-                        onContextMenu={e => handleSidebarContext(e, item)}
-                        onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                      >
-                        {item.is_dir ? (
+                    <div style={{ padding: '0 8px 6px' }}>
+                      {getParentPath(rootPath) !== null && (
+                        <div
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 8px',
+                            cursor: 'pointer', borderRadius: 3, fontSize: 12,
+                            color: c.textMuted, opacity: 0.7,
+                          }}
+                          onClick={navigateParent}
+                          onMouseEnter={e => { e.currentTarget.style.background = c.sidebarHover; e.currentTarget.style.opacity = '1'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.opacity = '0.7'; }}
+                        >
                           <Folder size={13} style={{ color: c.iconColor, flexShrink: 0 }} />
-                        ) : (
-                          <FileText size={13} style={{ color: getFileIconColor(item.name), flexShrink: 0 }} />
-                        )}
-                        {renameSidebar === item.name ? (
-                          <input ref={renameSidebarRef} autoFocus value={renameSidebarVal}
-                            onChange={e => setRenameSidebarVal(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') doSidebarRename(); if (e.key === 'Escape') setRenameSidebar(null); }}
-                            onBlur={() => doSidebarRename()}
-                            onClick={e => e.stopPropagation()}
+                          <span style={{ fontStyle: 'italic', fontSize: 12 }}>.. /</span>
+                          <span style={{ fontSize: 10, color: c.textDim, marginLeft: 2 }}>
+                            {getParentPath(rootPath)}
+                          </span>
+                        </div>
+                      )}
+                      {tree.length === 0 ? (
+                        <>
+                          <div style={{ fontSize: 11, color: c.textDim, padding: '6px' }}>Empty folder</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '0 6px' }}>
+                            {showEmptyNewFile ? (
+                              <>
+                                <input autoFocus value={newFileName}
+                                  onChange={e => setNewFileName(e.target.value)}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') handleCreateInTree();
+                                    if (e.key === 'Escape') setShowEmptyNewFile(false);
+                                  }}
+                                  placeholder="filename.ext"
+                                  style={{
+                                    flex: 1, padding: '4px 6px', fontSize: 11,
+                                    border: `1px solid ${c.border}`, borderRadius: 4,
+                                    background: c.bg, color: c.text, outline: 'none',
+                                  }}
+                                />
+                                <button onClick={handleCreateInTree}
+                                  style={{
+                                    padding: '3px 8px', border: 'none', borderRadius: 4,
+                                    background: c.btnBg, color: c.btnText, fontSize: 11,
+                                    cursor: 'pointer', fontWeight: 600,
+                                  }}>Create</button>
+                                <button onClick={() => setShowEmptyNewFile(false)}
+                                  style={{
+                                    padding: '3px 6px', border: `1px solid ${c.border}`, borderRadius: 4,
+                                    background: 'none', color: c.textMuted, fontSize: 11,
+                                    cursor: 'pointer',
+                                  }}><X size={11} /></button>
+                              </>
+                            ) : (
+                              <button onClick={() => { setNewFileName(''); setShowEmptyNewFile(true); }}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 4,
+                                  padding: '3px 8px', border: 'none', borderRadius: 4,
+                                  background: 'none', color: c.fileIconColor, fontSize: 11,
+                                  cursor: 'pointer', fontWeight: 500,
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                              >
+                                <Plus size={12} />
+                                <span>New File</span>
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        tree.map(item => (
+                          <div key={item.path}
                             style={{
-                              flex: 1, padding: '1px 4px', fontSize: 12,
-                              border: `1px solid ${c.border}`, borderRadius: 3,
-                              background: c.bg, color: c.text, outline: 'none',
+                              display: 'flex', alignItems: 'center', gap: 4, padding: '3px 6px 3px 16px',
+                              cursor: 'pointer', borderRadius: 3, fontSize: 12,
+                              color: c.textMuted,
+                              position: 'relative',
                             }}
-                          />
-                        ) : (
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                        )}
-                      </div>
-                    ))
+                            onClick={() => {
+                              if (renameSidebar) { setRenameSidebar(null); return; }
+                              item.is_dir ? navigateDir(item.path) : openFile(item.path);
+                            }}
+                            onContextMenu={e => handleSidebarContext(e, item)}
+                            onMouseEnter={e => e.currentTarget.style.background = c.sidebarHover}
+                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                          >
+                            {item.is_dir ? (
+                              <Folder size={13} style={{ color: c.iconColor, flexShrink: 0 }} />
+                            ) : (
+                              <FileText size={13} style={{ color: getFileIconColor(item.name), flexShrink: 0 }} />
+                            )}
+                            {renameSidebar === item.name ? (
+                              <input ref={renameSidebarRef} autoFocus value={renameSidebarVal}
+                                onChange={e => setRenameSidebarVal(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') doSidebarRename(); if (e.key === 'Escape') setRenameSidebar(null); }}
+                                onBlur={() => doSidebarRename()}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  flex: 1, padding: '1px 4px', fontSize: 12,
+                                  border: `1px solid ${c.border}`, borderRadius: 3,
+                                  background: c.bg, color: c.text, outline: 'none',
+                                }}
+                              />
+                            ) : (
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
                   )}
                 </div>
               ) : (

@@ -21,6 +21,7 @@ function AppearanceTab() {
   const toggleTheme = () => {
     const isDark = document.documentElement.classList.toggle('theme-dark');
     localStorage.setItem('cb-theme', isDark ? 'dark' : 'light');
+    document.dispatchEvent(new CustomEvent('theme-change'));
   };
 
   const setFont = (font: string) => {

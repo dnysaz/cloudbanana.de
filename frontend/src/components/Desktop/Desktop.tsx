@@ -237,7 +237,13 @@ const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toL
       const pos = f === 'center' ? 'center center' : 'center';
       const size = f === 'cover' ? 'cover' : f === 'contain' ? 'contain' : f === 'stretch' ? '100% 100%' : f === 'repeat' ? 'auto' : 'cover';
       const repeat = f === 'repeat' ? 'repeat' : 'no-repeat';
-      el.style.background = `url('${wp.value}') ${pos} / ${size} ${repeat}`;
+      el.style.backgroundImage = `url('${wp.value}')`;
+      el.style.backgroundPosition = pos;
+      el.style.backgroundSize = size;
+      el.style.backgroundRepeat = repeat;
+      el.style.backgroundAttachment = '';
+      el.style.backgroundOrigin = '';
+      el.style.backgroundClip = '';
     }
     localStorage.setItem('cb-wallpaper', id);
   };
@@ -484,7 +490,7 @@ const isWebFile = (name: string) => WEB_EXTS.includes(name.split('.').pop()?.toL
                 onClick={p.action}
                 onContextMenu={(e) => handleIconContext(e, p.name, false, p.id)}
                 title={p.name}>
-                <div className="di-icon di-pinned" style={{ color: 'rgba(255,255,255,0.9)' }}>
+                <div className="di-icon di-pinned">
                   <FmPinnedIcon />
                 </div>
                 <span className="di-name">{p.name}</span>
